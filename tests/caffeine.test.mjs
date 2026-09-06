@@ -29,6 +29,11 @@ const NOW = 1756704000 // 2025-09-01T05:20:00Z, fixed so nothing here is clock-d
 
 const at = (hoursAgo, mg, label = "test") => ({ ts: NOW - hoursAgo * HOUR, mg, label })
 
+// Local wall-clock timestamps, because bedtime is a wall clock: bedtimeSeconds
+// rolls by calendar day, so a test that fixed these in UTC would pass or fail
+// on the machine's timezone.
+const localTs = (y, m, d, h, min) => Math.floor(new Date(y, m, d, h, min, 0, 0).getTime() / 1000)
+
 // Arrays built inside the vm realm carry that realm's Array prototype, which
 // a strict deep-equal against a host literal rejects. Rehydrate through the
 // host's Array.from rather than loosening the assertion.
@@ -188,12 +193,18 @@ test("the sleep threshold clamps to its own bounds", () => {
 })
 
 test("the bedtime projection reads the level at bedtime, not now", () => {
-  const bedtime = caffeine.bedtimeSeconds(NOW, "23:00")
-  const doses = [at(0, 200)]
-  const projection = caffeine.bedtimeProjection(doses, NOW, 5, "23:00")
+  // A wall-clock morning, not NOW: inside the late window after bedtime the
+  // projection reads the level now instead of at a bedtime that has passed,
+  // which is its own behaviour and tested separately. NOW is fixed in UTC, so
+  // it falls in that window across the Americas and this test would be
+  // asserting the other branch there.
+  const morning = localTs(2025, 8, 1, 8, 0)
+  const bedtime = caffeine.bedtimeSeconds(morning, "23:00")
+  const doses = [{ ts: morning, mg: 200, label: "test" }]
+  const projection = caffeine.bedtimeProjection(doses, morning, 5, "23:00")
   assert.equal(projection.at, bedtime)
   assert.ok(Math.abs(projection.mg - caffeine.levelAt(doses, bedtime, 5)) < 1e-9)
-  assert.ok(projection.mg < caffeine.levelAt(doses, NOW + HOUR, 5))
+  assert.ok(projection.mg < caffeine.levelAt(doses, morning + HOUR, 5))
   assert.equal(projection.band, caffeine.bedtimeBand(projection.mg))
   assert.equal(projection.rounded, caffeine.roundDisplay(projection.mg))
   assert.ok(projection.hoursAway > 0)
@@ -205,7 +216,12 @@ test("the strong-dose line finds the last dose over 100mg", () => {
   assert.ok(Math.abs(caffeine.hoursSinceLastStrongDose(doses, NOW) - 7) < 1e-9)
 
   const lead = caffeine.strongDoseLead(doses, NOW, 5, "23:00")
-  const bedtime = caffeine.bedtimeSeconds(NOW, "23:00")
+  // The bedtime a dose is measured against is the one following *the dose*,
+  // not the one following now — that is defect #5, tested below. Deriving the
+  // expectation from NOW instead agreed with the code only in a timezone where
+  // both timestamps happen to land on the same side of 23:00, which is why
+  // this passed at UTC+1 and failed in CI's UTC.
+  const bedtime = caffeine.bedtimeSeconds(NOW - 7 * HOUR, "23:00")
   assert.ok(Math.abs(lead.hoursBeforeBed - (bedtime - (NOW - 7 * HOUR)) / HOUR) < 1e-9)
 
   // Nothing over the threshold reports nothing, rather than zero hours.
@@ -234,11 +250,6 @@ test("the strong-dose line does not call a 100 mg dose 'over 100 mg'", () => {
   assert.equal(caffeine.formatStrongDoseHead(125, undefined), "Last dose over 100 mg (125 mg)")
   assert.equal(caffeine.formatStrongDoseHead(undefined, 100), "Last dose of 100 mg")
 })
-
-// Local wall-clock timestamps, because bedtime is a wall clock: bedtimeSeconds
-// rolls by calendar day, so a test that fixed these in UTC would pass or fail
-// on the machine's timezone.
-const localTs = (y, m, d, h, min) => Math.floor(new Date(y, m, d, h, min, 0, 0).getTime() / 1000)
 
 test("a dose drunk after bedtime is not '23h before bed'", () => {
   // The defect, exactly: 23:57, a double espresso 27 minutes old, bedtime
