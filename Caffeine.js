@@ -56,6 +56,40 @@ var SLEEP_THRESHOLD_STEP_MG = 5
 // The line the studies actually measured, as opposed to the residual estimate.
 var STRONG_DOSE_MG = 100
 
+// ------------------------------------------------------------------- sharing
+//
+// What the share card signs itself with. A capture that travels off this
+// machine is the one thing the plugin produces that has to say what it is —
+// everywhere else the panel is already inside a bar that identifies it, and a
+// PNG on someone else's timeline is not.
+//
+// Both are the manifest's own fields, restated here because a JS resource
+// cannot read the manifest and a card that names the plugin something else is
+// worse than one that names it nothing. tests/run asserts the pair still
+// matches manifest.json, so the duplication cannot rot.
+var SHARE_NAME = "Caffeine Curve"
+var SHARE_URL = "github.com/latecompile/omarchy-caffeine-curve"
+
+// The saved file's name. Omarchy's own screenshots are
+// `screenshot-YYYY-MM-DD_HH-MM-SS.png` and these land in the same directory,
+// so they take the same shape with our own stem: sorted together, told apart
+// at a glance, and never colliding with a capture taken in the same second by
+// the shell.
+//
+// Local time, not UTC. It sits beside a curve labelled in wall-clock hours,
+// and a file stamped an hour off the evening it is about would be the one
+// thing on the card that disagrees with the rest of it.
+function shareFileName(atSeconds) {
+  var when = new Date(toSeconds(atSeconds) * 1000)
+  var pad = function(n) { return (n < 10 ? "0" : "") + n }
+  // dayKeyOf and not a third hand-rolled calendar date: it is this file's one
+  // answer to "which local day is this timestamp", DST reasoning included.
+  return "caffeine-curve-" + dayKeyOf(atSeconds)
+    + "_" + pad(when.getHours()) + "-" + pad(when.getMinutes())
+    + "-" + pad(when.getSeconds())
+    + ".png"
+}
+
 // How long after the bedtime clock a dose is still "tonight". Past this the
 // dose belongs to the day that has started rather than to the night that has
 // not ended, and the panel goes back to counting down to the next bedtime.
@@ -121,6 +155,12 @@ var MOTION_REVEAL_MS = 90
 var MOTION_PAGE_MS = 140
 var MOTION_POUR_MS = 420
 var MOTION_ENTRANCE_MS = 560
+
+// How long the panel says it saved something. Long enough to be read after the
+// keystroke that caused it, short enough that it is gone before it becomes
+// part of the furniture — and deliberately longer than any other motion here,
+// because this one is a sentence rather than a movement.
+var MOTION_TOAST_MS = 2400
 
 // D52's pour, in three parts. The stream falls from the rim, runs, and stops;
 // the numbers are shares of MOTION_POUR_MS so the pour cannot drift out of the

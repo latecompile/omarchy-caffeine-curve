@@ -21,10 +21,12 @@ omarchy plugin enable latecompile.caffeine-curve
 ```
 
 There is nothing else to install. The bar widget and the panel are QML running
-inside the Omarchy shell, and the only outside programs the plugin ever calls
-are `jq` and `awk`, which `caffeine-curve-settings` uses and which Omarchy
-already depends on. Running the tests additionally wants `node` and `ripgrep`;
-using the plugin does not.
+inside the Omarchy shell, and the outside programs the plugin ever calls are
+`jq` and `awk`, which `caffeine-curve-settings` uses, and — only when you share
+a picture of the panel — `wl-copy` to put it on the clipboard and
+`omarchy-notification-send` to say where it went. Omarchy already depends on
+all of them. Running the tests additionally wants `node` and `ripgrep`; using
+the plugin does not.
 
 ## Uninstall
 
@@ -288,6 +290,29 @@ This is one person moving between machines, not multi-master sync: the store
 does not merge, and Dropbox resolves a genuine conflict by leaving a
 "conflicted copy" beside the file.
 
+## Sharing a picture of it
+
+Press `c` on the panel, or click the camera that appears at the top-right of
+the chart when you point at it. You get a 16:9 card — the cup, what is on board
+now, the verdict at bedtime, the curve, and the day's total — on the clipboard
+and saved beside your other screenshots, in `$OMARCHY_SCREENSHOT_DIR` or
+`$XDG_PICTURES_DIR` or `~/Pictures`, whichever your machine defines first.
+
+It is a render of the reading rather than a screenshot of the window, which is
+why it is exactly the card and never the desktop behind it: the panel is drawn
+inside a full-screen layer surface, so no screenshot tool can pick it out and
+you would be dragging a rectangle round it by eye.
+
+**It carries the curve and the verdict, and not your log.** No drink names, no
+times, no notes. That is the one privacy decision in the plugin — this is the
+only thing here that leaves the machine — and it is also what makes the card
+readable at a glance. If you want the literal panel, drinks and all,
+`omarchy screenshot` with a region works and always has.
+
+`omarchy-shell caffeine-curve share` does the same thing from a Hyprland
+keybind. The panel has to be open for there to be anything to draw, so that
+command opens it and leaves it open.
+
 ## Logging without the panel
 
 ```bash
@@ -295,6 +320,7 @@ omarchy-shell caffeine-curve log 125 "Espresso (Double)"
 omarchy-shell caffeine-curve list
 omarchy-shell caffeine-curve level 5        # mg on board now, at a 5-hour half-life
 omarchy-shell caffeine-curve toggle         # open | close | toggle
+omarchy-shell caffeine-curve share          # write the share card, open the panel if it is shut
 ```
 
 `log` on a Hyprland keybind is fewer actions than opening the panel and
@@ -321,6 +347,7 @@ Press `?` in the panel for the full list.
 | `m` | show every drink |
 | `d` | how the chart is framed: now in the middle, a whole day, or the hours you choose |
 | `D` | the same, the other way round |
+| `c` | share the day as an image — 16:9, on the clipboard and in your screenshots folder |
 | `s` | settings |
 | `?` | the full key list — and, on a quiet panel, the estimate note with it |
 | `Esc` | close one thing at a time — a field, then the key card, then the page, then the panel |

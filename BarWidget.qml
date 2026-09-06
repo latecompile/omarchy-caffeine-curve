@@ -257,6 +257,16 @@ BarWidget {
       return "ok"
     }
 
+    // The share, without opening anything. Same argument as `log`: on a
+    // Hyprland keybind this is one keystroke where the panel route is three,
+    // and it is the only way to get the card while another window is focused.
+    // The panel is where the picture is composed, so this is a forward.
+    function share(): string {
+      var target = panelLoader.item
+      if (!target || typeof target.captureShare !== "function") return "no panel"
+      return target.captureShare() ? "ok" : "refused"
+    }
+
     function open(): void { root.open() }
     function close(): void { root.close() }
     function toggle(): void { root.togglePanel() }

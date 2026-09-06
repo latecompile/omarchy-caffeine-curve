@@ -18,6 +18,21 @@ jq -e '
 
 node --test
 
+# The share card signs itself with the plugin's name and address, and a JS
+# resource cannot read the manifest — so the two are written down twice and
+# this is what stops the copies diverging. A card that names the plugin
+# something the manifest does not is worse than one that names it nothing.
+name=$(jq -r .name manifest.json)
+homepage=$(jq -r .homepage manifest.json)
+rg -q "^var SHARE_NAME = \"$name\"\$" Caffeine.js || {
+  echo "SHARE_NAME does not match manifest .name ($name)" >&2
+  exit 1
+}
+rg -q "^var SHARE_URL = \"${homepage#https://}\"\$" Caffeine.js || {
+  echo "SHARE_URL does not match manifest .homepage ($homepage)" >&2
+  exit 1
+}
+
 # Colours must come from qs.Commons.Color so they re-bind when the theme swaps.
 # A literal hex anywhere in the QML is an instant fail in review.
 ! rg -q '#[0-9a-fA-F]{3,8}\b' -- *.qml

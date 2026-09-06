@@ -2965,3 +2965,26 @@ test("the only definition of a cup there is says what it is and not how big", ()
   // comparison the unit cannot win.
   for (const units of ["mg", "cups"]) assert.doesNotMatch(note(units), /ml|fl oz/)
 })
+
+test("a share lands beside the shell's own screenshots and sorts with them", () => {
+  // Omarchy writes `screenshot-YYYY-MM-DD_HH-MM-SS.png` into the same
+  // directory, so ours takes the same shape with its own stem: the two sort
+  // together by name, and a glance tells them apart.
+  const at = localTs(2025, 8, 1, 7, 5)
+  assert.equal(caffeine.shareFileName(at), "caffeine-curve-2025-09-01_07-05-00.png")
+  // Every field zero-padded, including the one that is only ever wrong at
+  // single digits.
+  assert.match(caffeine.shareFileName(localTs(2025, 11, 9, 0, 0)),
+    /^caffeine-curve-2025-12-09_00-00-00\.png$/)
+})
+
+test("a share is stamped in local time, like everything else on the card", () => {
+  // The file sits beside a curve labelled in wall-clock hours. A UTC stamp
+  // would be the one thing in the picture disagreeing with the rest of it —
+  // and would file a European evening under tomorrow, which is dayKeyOf's own
+  // argument, reused here rather than restated.
+  const evening = localTs(2025, 8, 1, 23, 30)
+  assert.match(caffeine.shareFileName(evening), /^caffeine-curve-2025-09-01_23-30-00\.png$/)
+  assert.equal(caffeine.shareFileName(evening).slice("caffeine-curve-".length, -"_23-30-00.png".length),
+    caffeine.dayKeyOf(evening))
+})

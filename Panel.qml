@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell
+import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
@@ -421,6 +422,9 @@ Panel {
       // After the resample, so the wipe reveals the curve it is about to draw
       // rather than the one from last time.
       curve.playEntrance()
+      // An IPC share opened this panel; the capture waits for the curve it is
+      // about to draw. See captureShare.
+      if (root.sharePending) sharePendingTimer.restart()
     }
   }
   onDosesChanged: {
@@ -475,6 +479,187 @@ Panel {
     interval: 60000
     repeat: true
     onTriggered: root.resample()
+  }
+
+  // -------------------------------------------------------------- sharing
+  //
+  // D112. The one thing this plugin makes that leaves the machine.
+  //
+  // **It is a render, not a screenshot.** The panel is drawn inside a
+  // full-screen layer surface — `hyprctl layers` shows one 1692x1128
+  // `omarchy-keyboard-panel` with the card painted somewhere inside it — so
+  // nothing that picks a *window* can pick this panel out. `omarchy screenshot`
+  // in smart or window mode captures whatever is behind us; the only mode that
+  // works is a hand-drawn region around a card with a rounded border, and the
+  // crop is eyeballed every time. `grabToImage` sidesteps the whole problem:
+  // exact bounds, no region to draw, no screen freeze, no dependency on a
+  // capture stack, and it cannot catch a notification that happened to be up.
+  //
+  // Two things about it were proved with a render before this was written,
+  // because both decide the design:
+  //
+  // 1. **An item off the side of the surface still grabs.** `shareStage` sits
+  //    at a negative offset so it is never composited, and Qt renders it into
+  //    the FBO anyway. If it did not, the card would have to flash on screen.
+  // 2. **`targetSize` re-rasterises rather than upscaling.** The card is built
+  //    at panel scale, where every `Style` token means what it means everywhere
+  //    else in this plugin, and grabbed at 1600x900 — and the glyphs come out
+  //    sharp at 2.67x, not resampled. That is the whole reason ShareCard.qml
+  //    can be ordinary panel QML instead of a second type scale.
+  //
+  // The saved file lands where the shell's own screenshots land, under the
+  // same directory rules, resolved by the same shell expression rather than
+  // guessed at: `user-dirs.dirs` is a file bash sources, not an environment
+  // variable, so reading `XDG_PICTURES_DIR` off the process would be right on
+  // the machines that happen to export it and silently wrong on the rest.
+  // 16:9 at a width the timelines do not have to resample. The card itself is
+  // drawn at panel scale; this is only how large it is captured.
+  readonly property int shareWidth: 1600
+  readonly property int shareHeight: 900
+
+  // Resolved once, on first use rather than at load: a panel that never shares
+  // should not spawn a shell, and the answer cannot change under us in a way
+  // that matters within a session.
+  property string shareDir: ""
+  property bool shareBusy: false
+
+  // True when the share was accepted, so the IPC caller learns the difference
+  // between "saved" and "there was nothing to save".
+  function captureShare() {
+    // Nothing to be a picture of. The empty state is a real state — a fresh
+    // install before the first drink — and a card of it would be a wordmark
+    // over an empty box.
+    if (!root.hasDoses || root.shareBusy) return false
+    root.shareBusy = true
+
+    // **A closed panel has no scene graph, so there is nothing to grab.**
+    // KeyboardPanel's surface is `visible: open || …`, and an unmapped window
+    // renders nothing — the stage included. The keyboard route never meets
+    // this (you pressed `c` on an open panel); the IPC route always does, and
+    // it is the route that exists precisely so you can share without opening
+    // anything.
+    //
+    // So it opens. Not as a fallback but as the honest thing: the card is a
+    // picture of a reading, the panel is where that reading lives, and a
+    // hotkey that silently wrote a file about a chart you cannot see would be
+    // the plugin doing something you have no way to check. It stays open
+    // afterwards for the same reason.
+    if (!root.opened) {
+      root.sharePending = true
+      root.openFromHotkey()
+      return true
+    }
+    root.beginShare()
+    return true
+  }
+
+  property bool sharePending: false
+
+  function beginShare() {
+    if (root.shareDir === "") shareDirProc.running = true
+    else root.grabShare()
+  }
+
+  // One frame is not enough: the Curve rebuilds its path imperatively when the
+  // panel opens (`playEntrance` above), so a grab on the tick the surface maps
+  // catches the card with an empty chart in it. This waits for the entrance to
+  // have run, which is the same length the curve itself animates for.
+  Timer {
+    id: sharePendingTimer
+    interval: Caffeine.MOTION_ENTRANCE_MS
+    onTriggered: {
+      root.sharePending = false
+      root.beginShare()
+    }
+  }
+
+  function grabShare() {
+    var target = root.shareDir + "/" + Caffeine.shareFileName(Date.now() / 1000)
+    // The grab is asynchronous and the callback is the only place that knows
+    // whether it worked, so every exit from here goes through shareFinished.
+    var started = shareStage.grabToImage(function(result) {
+      if (!result || !result.saveToFile(target)) {
+        root.shareFailed("could not write " + target)
+        return
+      }
+      root.sharePath = target
+      shareCopyProc.running = true
+    }, Qt.size(root.shareWidth, root.shareHeight))
+    if (!started) root.shareFailed("could not render the card")
+  }
+
+  property string sharePath: ""
+
+  function shareFailed(why) {
+    console.warn("caffeine-curve: share failed —", why)
+    root.shareBusy = false
+    root.shareToast = "Could not save the image"
+    shareToastTimer.restart()
+  }
+
+  // Said on the panel rather than only in a notification, because the panel is
+  // where the key was pressed and it is still open. The notification is for
+  // the file — it carries the thumbnail and outlives the panel — and this is
+  // the acknowledgement that the keystroke did something, which is the part a
+  // notification arriving a moment later does badly.
+  property string shareToast: ""
+
+  Timer {
+    id: shareToastTimer
+    interval: Caffeine.MOTION_TOAST_MS
+    onTriggered: root.shareToast = ""
+  }
+
+  // The shell's own rule for where a capture goes, run as the shell runs it.
+  Process {
+    id: shareDirProc
+    running: false
+    command: ["bash", "-c",
+      "[[ -f ~/.config/user-dirs.dirs ]] && source ~/.config/user-dirs.dirs; "
+      + "dir=\"${OMARCHY_SCREENSHOT_DIR:-${XDG_PICTURES_DIR:-$HOME/Pictures}}\"; "
+      + "mkdir -p \"$dir\" && printf %s \"$dir\""]
+
+    stdout: StdioCollector {
+      onStreamFinished: root.shareDir = text.trim()
+    }
+
+    onExited: function(exitCode) {
+      if (exitCode !== 0 || root.shareDir === "") {
+        root.shareFailed("no directory to write into")
+        return
+      }
+      root.grabShare()
+    }
+  }
+
+  // Clipboard first, notification second, and the notification is
+  // best-effort: by the time it runs the image is already saved and already
+  // pasteable, so a notification daemon that is not up must not report the
+  // share as failed. That is the shell's own reasoning in
+  // omarchy-capture-screenshot, and this is the same sequence.
+  Process {
+    id: shareCopyProc
+    running: false
+    // wl-copy reads the image on stdin — it has no file argument, and its
+    // positional arguments are text to copy, so passing the path there would
+    // put the *filename* on the clipboard. Hence the redirect, and hence bash.
+    command: ["bash", "-c", "wl-copy --type image/png < \"$1\"", "wl-copy",
+      root.sharePath]
+
+    onExited: function(exitCode) {
+      root.shareBusy = false
+      root.shareToast = exitCode === 0 ? "Image copied" : "Image saved"
+      shareToastTimer.restart()
+      shareNotifyProc.running = true
+    }
+  }
+
+  Process {
+    id: shareNotifyProc
+    running: false
+    command: ["omarchy-notification-send",
+      "Caffeine Curve copied to clipboard and file", root.sharePath,
+      "--image", root.sharePath]
   }
 
   // ------------------------------------------------------------ the verdict
@@ -589,6 +774,18 @@ Panel {
     + root.amountTextOf(root.anchoredFrame
       ? Caffeine.totalInRange(root.doses, root.captionWindow.from, root.captionWindow.to)
       : Caffeine.dayTotalMg(root.doses, root.captionAnchorTs))
+
+  // The same line as the caption above, anchored where the card needs it:
+  // always the window you are looking at, never the pinned one. The two
+  // differ only at home with a pin, and there the panel's caption is
+  // deliberately about the ghost while the card is a picture of the live
+  // curve — so this is the same sentence about a different day, not a second
+  // opinion about the same one.
+  readonly property string shareDayLine:
+    Caffeine.formatDayOffset(root.viewAnchorTs, root.nowSeconds) + "  ·  "
+    + root.amountTextOf(root.anchoredFrame
+      ? Caffeine.totalInRange(root.doses, root.viewWindow.from, root.viewWindow.to)
+      : Caffeine.dayTotalMg(root.doses, root.viewAnchorTs))
 
   // ------------------------------------------------------------- D90: the pin
   //
@@ -2729,6 +2926,11 @@ Panel {
     else if (fingerForward) root.showAllPresets = true
     else if (fingerBack) root.showAllPresets = false
     else if (text === "m" || text === "M") root.showAllPresets = !root.showAllPresets
+    // The main page only, and on purpose. Every other page returns above this
+    // line, so `c` keeps the settings page's jump to the cap row (D109) —
+    // which is the same rule the rest of this function is built on: a key
+    // means one thing per page, and each page's own card is true of that page.
+    else if (text === "c" || text === "C") root.captureShare()
     else if (text === "s" || text === "S") root.openSettings()
     else if (text === "?" || text === "/") root.showKeys = !root.showKeys
     else root.logDigit(text)
@@ -2750,6 +2952,14 @@ Panel {
   // scale. What teaches the mark is the panned-away state: "\uf08d 3 days ago"
   // sitting opposite "Yesterday · 267 mg" shows you what it points at.
   readonly property string pinGlyph: "\uf08d"
+
+  // The camera, for the same kind of reason the thumb-tack won D90: the mark
+  // has to name the verb, not the noun. `\uf1e0` is the share node — three
+  // circles and two lines — which says *send somewhere* and is unreadable at
+  // this size; `\uf03e` is a picture frame, which is what the file is rather
+  // than what the button does. `\uf030` is a camera, and a camera on a chart
+  // is the one mark nobody has to be taught.
+  readonly property string shareGlyph: "\uf030"
 
   // D90's third question. `p pin this day under today` did not admit that "p"
   // also takes a pin off, or that at home it clears one (D64) — three
@@ -2964,7 +3174,25 @@ Panel {
       // and its echo of `t back to today` four rows up is the two keys that
       // actually go backwards sharing a word. Which is a reason rather than
       // a coincidence.
-      { keys: "D", what: "back the other way" }
+      { keys: "D", what: "back the other way" },
+      // The share key, last in the right-hand column because that is the
+      // chart's column — `[ ]`, `t`, `n`, `d` and `D` are all about the
+      // picture, and so is this. **After `D` and not between the two**: D107
+      // put `D` directly under `d` and said so, and a row inserted into that
+      // pair separates a key from the key it is the reverse of. It is the only
+      // entry here that writes a file, which is its own argument for being the
+      // one the column ends on.
+      //
+      // **It does not go on the footer legend, and that is D94's rule rather
+      // than a shortage of room.** The line's own test for a slot, applied
+      // twice (the timeline at Phase 11, the note at Phase 12), is that a key
+      // earns one when it is something you *cannot* discover by looking at the
+      // panel. This one has a mark on screen — the glyph that arrives on the
+      // chart when you point at it — and the line's other standing rule is
+      // that the item which leaves is the one with a control already doing its
+      // job. So it would fail the test on the same evidence that got it a
+      // glyph, and D94's free slot stays free.
+      { keys: "c", what: "share this view as an image" }
     ]]
 
   // Esc takes one thing at a time, innermost first: the field being typed
@@ -3700,9 +3928,78 @@ Panel {
 
               // ---------------------------------------------------------- curve
               Item {
+                id: chart
                 width: parent.width
                 visible: root.hasDoses
                 height: visible ? curve.height + axis.height + Style.spacing.sm : 0
+
+                // D112's mark, and the reason `c` is not on the footer legend.
+                //
+                // **It is on the chart and not at the corner, and that is
+                // D94 being obeyed rather than worked around.** The corner is
+                // one mark with a caption beside it, decided three times
+                // (D87, D93, D94) and decided last on the sentence that two
+                // items there "read as two items on a line that has run out".
+                // A camera next to the bean would be exactly that, and would
+                // reopen a question that has been closed twice.
+                //
+                // So it goes on the thing it is about. The share card is the
+                // chart plus the verdict above it; putting the control on the
+                // chart says which of the five pages this key belongs to
+                // without a word of legend, and it is the only surface on the
+                // panel with no pointer behaviour of its own to displace.
+                //
+                // Hidden until pointed at, because a control that is always
+                // lit on a chart competes with the curve — the same argument
+                // D36 settled for the hero's underline, and settled the same
+                // way: the affordance arrives when the pointer does. The key
+                // is the discoverable route, on the "?" card with the rest.
+                // Hover detection for the mark above, and it took three
+                // shapes to find one that works inside this surface. Written
+                // first as `acceptedButtons: Qt.NoButton` — the documented way
+                // to watch hover without taking the press — it never reported
+                // `containsMouse` at all, and a `HoverHandler` did not either.
+                // Both were rendered with the chart's bounds tinted and the
+                // pointer parked on it, which is the only way this shows: the
+                // mark simply stays hidden under a cursor that is on the
+                // chart, and nothing anywhere says why.
+                //
+                // What works is a MouseArea that accepts a button. So it
+                // accepts one and does nothing with it, which costs exactly
+                // nothing here: the chart has never had a click behaviour, and
+                // what a click on it reached before was the card's own
+                // swallow-everything MouseArea, whose whole job is to do
+                // nothing. The panel's cursor model (D82) is untouched — this
+                // area never moves the cursor.
+                MouseArea {
+                  id: chartHover
+                  anchors.fill: parent
+                  acceptedButtons: Qt.LeftButton
+                  hoverEnabled: true
+                }
+
+
+                PanelActionButton {
+                  id: shareButton
+                  anchors.right: parent.right
+                  anchors.top: parent.top
+                  visible: opacity > 0
+                  // Both, because the button's own MouseArea takes the
+                  // pointer the moment it crosses it. A mark that faded out
+                  // from under the cursor reaching for it would be the one
+                  // bug this affordance cannot have.
+                  opacity: chartHover.containsMouse || shareButton.pointedAt ? 1 : 0
+                  Behavior on opacity { NumberAnimation { duration: Caffeine.MOTION_REVEAL_MS } }
+                  iconText: root.shareGlyph
+                  tooltipText: "Share this view  (c)"
+                  hasCursor: false
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  onClicked: root.captureShare()
+
+                  property bool pointedAt: false
+                  onHovered: function(isHovered) { shareButton.pointedAt = isHovered }
+                }
 
                 // A day with nothing on it says so, rather than leaving an
                 // axis and a bedtime hairline over an empty box. The empty
@@ -4499,10 +4796,22 @@ Panel {
               // Empty in the quiet state, which is the whole of what quiet
               // does to this line now: the corner to its right is the same in
               // both states, so there is nothing left to fold.
-              visible: root.keyHintText !== ""
+              //
+              // **D112 borrows the line for a moment.** A share is the only
+              // thing this panel does whose result is somewhere else — every
+              // other key changes something you are already looking at — so it
+              // is the only one that has to say it happened. The legend is the
+              // right place to say it: it is the line that talks about keys,
+              // it is already the dimmest thing on the panel so a brief bright
+              // sentence there is unmissable without being loud, and borrowing
+              // it costs nothing, because a legend you are not reading is not
+              // a legend you lose. It says so in the quiet state too, where
+              // the line is otherwise empty and the notification would be the
+              // only acknowledgement at all.
+              visible: root.keyHintText !== "" || root.shareToast !== ""
               textFormat: Text.PlainText
-              text: root.keyHintText
-              color: Qt.darker(root.foreground, 1.8)
+              text: root.shareToast !== "" ? root.shareToast : root.keyHintText
+              color: root.shareToast !== "" ? root.accent : Qt.darker(root.foreground, 1.8)
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
               elide: Text.ElideRight
@@ -4900,6 +5209,60 @@ Panel {
           text: "‹ ›  - +"
         }
       }
+    }
+
+    // --------------------------------------------------------- the share stage
+    //
+    // Off the side of the surface, never composited, and grabbed on demand.
+    // The offset is not a margin — nothing is being laid out here — so it is a
+    // plain number rather than a Style token: the card has to be somewhere the
+    // compositor will never put it, and any coordinate outside the surface
+    // does. See `captureShare` for why this renders at all when it is never
+    // drawn.
+    //
+    // It is a live item and not a snapshot taken at capture time, so it is
+    // already laid out when `c` is pressed: the Curve rebuilds its path
+    // imperatively and a card built inside the grab call would be captured a
+    // frame before its own chart existed.
+    ShareCard {
+      id: shareStage
+      x: -root.shareWidth
+      y: -root.shareHeight
+
+      levelText: Caffeine.formatAmountApprox(root.level, root.units, root.cupMg)
+      headlineText: Caffeine.projectionHeadline(root.projection, root.units,
+        root.clockOf(root.projection.bedtimeAt), root.cupMg)
+      captionText: Caffeine.projectionCaption(root.projection).toUpperCase()
+      estimateNote: Caffeine.formatEstimateNote(root.halfLifeHours, root.units, root.cupMg)
+      // The panel draws this line only when the window has moved off today,
+      // because on the panel you already know which day you are looking at.
+      // On the card nobody does, so it is always drawn — and it therefore
+      // cannot be `viewDayLine`, which is anchored at `captionAnchorTs` and so
+      // points at the *pinned* day whenever the caption is not being forced.
+      // At home with no pin that anchor is zero, and the first render of this
+      // card duly said "20702 days ago · 0 mg" under a chart of today.
+      dayCaption: root.shareDayLine
+      hasDoses: root.hasDoses
+      fill: root.fill
+
+      samples: root.samples
+      curveMax: root.curveMax
+      fromTs: root.fromTs
+      toTs: root.toTs
+      nowTs: root.nowSeconds
+      recordFromTs: root.oldestDoseTs
+      bedtimeTs: root.viewBedtimeTs
+      bandLabel: root.bedtimeCaption
+      ghostSamples: root.ghostSamples
+      ghostVisible: root.ghostVisible
+      axisNowVisible: !root.panned && root.windowHasNow
+      axisLabelOf: root.axisLabelOf
+
+      foreground: root.foreground
+      accent: root.accent
+      dim: root.dim
+      band: root.bandColor(root.projection.band)
+      fontFamily: root.fontFamily
     }
   }
 }
