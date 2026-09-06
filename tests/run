@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# The whole test suite. CI runs this file and nothing else.
+set -euo pipefail
+
+project_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+cd "$project_dir"
+
+# The manifest fields that are expensive to get wrong. `id` most of all: it is
+# the install directory and the key in every user's shell.json, so a change
+# after release orphans installs.
+jq -e '
+  .schemaVersion == 1
+  and .id == "latecompile.caffeine-curve"
+  and .license == "MIT"
+  and (.kinds | index("bar-widget"))
+  and .entryPoints.barWidget == "BarWidget.qml"
+' manifest.json >/dev/null
+
+node --test
+
+# Colours must come from qs.Commons.Color so they re-bind when the theme swaps.
+# A literal hex anywhere in the QML is an instant fail in review.
+! rg -q '#[0-9a-fA-F]{3,8}\b' -- *.qml
+
+# Every gap in the plugin comes from Style.spacing, so a theme that scales its
+# spacing scales ours. A line is allowed to be exactly `0` (the page stack holds
+# one page at a time, and each page owns its own spacing) or to reach for a
+# Style token — including the one row that picks between two of them with a
+# ternary. Anything else is a magic number. Phase 13 audited these; what it
+# found was one raw hairline that had quietly stopped scaling with the rest.
+# A gap may be a Style token, a plain `0`, or an expression over other
+# properties (one row picks between two tokens with a ternary that continues on
+# the next line). What it may not be is a number someone typed.
+offenders=$(rg -N --no-heading '^\s*(anchors\.\w*Margin|spacing):' -- *.qml \
+  | awk -F': *' '{ v = $NF }
+      v ~ /Style\./ { next }
+      v ~ /^0[[:space:]]*$/ { next }
+      v ~ /[0-9]/ { print }' || true)
+if [[ -n $offenders ]]; then
+  echo "spacing is not from Style:" >&2
+  echo "$offenders" >&2
+  exit 1
+fi
+
+# Every watching FileView must have a `mkdir -p` behind it. FileView cannot
+# watch a path whose directory does not exist and never recovers if it could not
+# — so a store that skips this reads its defaults, writes its file, and then
+# ignores every external change for the rest of the session. Settings.qml did
+# exactly that, and it was invisible on any machine where another widget had
+# already made ~/.local/state/omarchy/settings. Only a fresh install shows it,
+# which is why this is a grep and not a unit test.
+for store in Store.qml Notes.qml Settings.qml; do
+  rg -q 'watchChanges: true' -- "$store" || continue
+  rg -q 'command: \["mkdir", "-p"' -- "$store" || {
+    echo "$store watches a file but never creates its directory" >&2
+    exit 1
+  }
+done
+
+# Caffeine.js and Presets.js are loaded into a bare vm context by the tests and
+# imported as plain JS resources by the QML. Reaching for Qt or Quickshell in
+# either would work in the shell and break the tests, so catch it here.
+! rg -q '\b(Qt|Quickshell|console)\.' Caffeine.js Presets.js
+
+if command -v omarchy >/dev/null; then
+  omarchy plugin validate . >/dev/null
+fi
+
+# Not installed on every machine; CI provides it.
+if command -v qmllint >/dev/null; then
+  qmllint --bare -I /usr/share/omarchy/shell -- *.qml
+fi
+
+echo "ok"

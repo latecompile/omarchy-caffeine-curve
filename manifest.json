@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "latecompile.caffeine-curve",
+  "name": "Caffeine Curve",
+  "version": "0.1.0",
+  "author": "Late Compile",
+  "license": "MIT",
+  "description": "Log a coffee with one click, watch it decay in the bar, and see what is still in you at bedtime.",
+  "homepage": "https://github.com/latecompile/omarchy-caffeine-curve",
+  "repository": "https://github.com/latecompile/omarchy-caffeine-curve",
+  "keywords": [
+    "caffeine",
+    "coffee",
+    "sleep",
+    "health",
+    "tracker"
+  ],
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Caffeine Curve",
+    "description": "Estimated caffeine still in your system",
+    "category": "Info",
+    "allowMultiple": false,
+    "defaultSection": "center"
+  }
+}

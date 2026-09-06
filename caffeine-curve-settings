@@ -1,0 +1,399 @@
+#!/usr/bin/env bash
+#
+# caffeine-curve-settings - read, change or reset the Caffeine Curve settings.
+#
+# The store is one JSON object at
+# ~/.local/state/omarchy/settings/caffeine-curve.json. An absent file means
+# defaults, which is why --clear is simply a delete. The panel writes through
+# this script and reads the file with a watching FileView, so a change made
+# here shows up in an open panel immediately, with no shell restart.
+#
+# `omarchy bar set latecompile.caffeine-curve ...` has NO effect on this
+# widget: the inline settings it writes to shell.json are not read.
+#
+#   (no args) | --get     print the stored settings, or {} when there are none
+#   --defaults            print the shipped defaults
+#   --set KEY VALUE ...   store one or more settings
+#   --set-json KEY SOURCE store a structured setting; SOURCE is inline JSON,
+#                         @FILE, or - to read standard input
+#   --unset KEY ...       forget one setting, restoring its default
+#   --clear               delete the file, restoring every default
+#
+#   bedtime           a clock: 23:00, or 11:00 PM
+#   chartFrame        rolling | day | hours   how the curve is framed (D105).
+#                     "rolling" is now in the middle, twelve hours each way.
+#                     "day" is 24 hours from dayStart. "hours" runs dayStart to
+#                     dayEnd, which is the only framing not 24 hours wide and
+#                     the only one that leaves a gap the present can fall in.
+#   dayStart          a clock: when the day framing begins. Default 07:00.
+#   dayEnd            a clock: where the "hours" framing stops. Default 00:00.
+#                     Equal to dayStart means a whole day; a pair under two
+#                     hours apart is widened to two by the reader.
+#   halfLifeHours     2-16   a number here overrides the profile's estimate
+#   sleepThresholdMg  10-100   the mg the bedtime verdict pivots on
+#   units             mg | cups
+#   cupMg             50-300   what one cup means, in mg (D84)
+#   dailyCapEnabled   true | false
+#   dailyCapMg        50-1000
+#   quietPanel        true | false   fold the two footer lines behind "?"
+#   barNumber         always | moving | never   whether the bar mark paints
+#                     its reading beside the cup. "moving" shows it for one
+#                     Tmax after a drink (~48 min at a 5-hour half-life),
+#                     which is as long as the reading is still climbing. The
+#                     tooltip and the panel state it whatever this says.
+#   drinks            --set-json only: the drink catalog, an array of
+#                     {label, mg} with optional id, detail and icon. 1-29
+#                     entries, mg 1-500. `icon` is one of the twelve glyphs
+#                     the panel can draw (see README); "" or absent is none.
+#                     Unset means the shipped seventeen.
+#   profile           --set-json only: the half-life questionnaire, an object
+#                     of answers. Unset means an empty profile, which estimates
+#                     5 hours. A halfLifeHours set by hand beats it.
+#                       clearance       typical | slow | fast
+#                       smoker          no | yes
+#                       contraceptives  no | yes
+#                       pregnancy       no | first | second | third
+#                       alcohol         no | yes
+#
+set -euo pipefail
+umask 077
+
+state_root=${XDG_STATE_HOME:-$HOME/.local/state}
+settings_dir="$state_root/omarchy/settings"
+settings_file="$settings_dir/caffeine-curve.json"
+
+# Eleven scalars and a catalog capped at 29 drinks. Anything approaching this
+# is not our file.
+max_bytes=65536
+
+# One structured value on its own. The catalog is the only one, and twenty-nine
+# drinks is about two kilobytes; this is the room to be wrong in, not a target.
+max_json_bytes=8192
+
+# D31's cap and bounds, and they are the engine's: Presets.js clamps silently
+# because it cannot afford to crash the shell, and this refuses out loud
+# because a person at a terminal deserves to be told. A test pins the two
+# together. **Twenty-nine since D97**: the panel's grid is six wide and one of
+# its cells is the "+ More" toggle, so the cap is whole rows minus that one —
+# three rows was seventeen (D88), five rows is twenty-nine. It went up because
+# D96 ships seventeen drinks, and a catalog that ships full is not a catalog.
+catalog_max=29
+
+# D53's icon vocabulary, and the same two-implementations rule the catalog
+# bounds and the profile answers already follow: Presets.js degrades an
+# unknown glyph to no icon because it cannot afford to crash the shell, and
+# this refuses out loud because a person at a terminal deserves to be told
+# they typed a codepoint the panel will not draw. A test pins the two lists.
+drink_icons="[\"\", \"\uf0f4\", \"\udb80\udd76\", \"\udb80\udea6\", \"\uf06c\", \"\uf2dc\", \"\uf0e7\", \"\uf043\", \"\uf000\", \"\uf1b3\", \"\uf185\", \"\uf186\"]"
+
+# D91's and D101's migrations, and the same rule as the list above with one
+# difference:
+# the engine does not *degrade* a glyph this plugin used to draw, it maps it
+# onto the one that replaced it. So this accepts a catalog written by an older
+# version rather than refusing it — a person re-setting their own dump is not
+# making a mistake. A test pins this against Presets.ICON_ALIASES.
+drink_icon_aliases="[\"\ue256\", \"\uf0fc\"]"
+
+mg_min=1
+mg_max=500
+label_max=24
+
+# D34's questionnaire, and the same two-implementations rule: Caffeine.js falls
+# an unrecognised answer back to the neutral one because it cannot afford to
+# crash the shell, and this refuses out loud because a person at a terminal
+# deserves to be told. A test pins the two lists together.
+#
+# Five questions since D100, which took the fluvoxamine row off the page. A
+# stored "medication" key is now refused here and silently ignored by the
+# engine - correct in both places, and there is nothing to migrate it to.
+profile_answers='{
+  "clearance":      ["typical", "slow", "fast"],
+  "smoker":         ["no", "yes"],
+  "contraceptives": ["no", "yes"],
+  "pregnancy":      ["no", "first", "second", "third"],
+  "alcohol":        ["no", "yes"]
+}'
+
+defaults='{"bedtime":"23:00","chartFrame":"rolling","dayStart":"07:00","dayEnd":"00:00","halfLifeHours":5,"sleepThresholdMg":30,"units":"mg","cupMg":100,"dailyCapEnabled":false,"dailyCapMg":400,"quietPanel":false,"barNumber":"moving"}'
+
+die() { echo "caffeine-curve-settings: $1" >&2; exit "${2:-2}"; }
+
+# 700 on a directory we create, and nothing at all to one that is already
+# there: this directory is shared with the first-party settings (weather.json
+# lives beside us), and quietly re-moding someone else's directory is not our
+# business.
+ensure_dir() { [[ -d $settings_dir ]] || install -d -m 700 "$settings_dir"; }
+
+# The lock is the settings directory's own file descriptor rather than a lock
+# file: this directory is shared with the first-party settings, and a stray
+# dotfile left in it is litter in someone else's drawer.
+
+command -v jq >/dev/null || die "jq is required" 5
+
+integer_between() { # value min max
+  [[ $1 =~ ^-?[0-9]+$ ]] && (( $1 >= $2 && $1 <= $3 ))
+}
+
+# Echoes the JSON encoding of VALUE for KEY, or exits non-zero. Validating here
+# as well as in the reader is deliberate: the reader clamps silently because it
+# must never crash the shell, and a person typing at a terminal deserves to be
+# told they were refused.
+encode() {
+  local key=$1 value=$2
+  case "$key" in
+  bedtime)
+    if [[ $value =~ ^([01]?[0-9]|2[0-3]):[0-5][0-9]$ ]] \
+      || [[ $value =~ ^(1[0-2]|[1-9])(:[0-5][0-9])?[[:space:]]*[AaPp]\.?[Mm]?\.?$ ]]; then
+      jq -cn --arg v "$value" '$v'
+    else
+      die "bedtime must be a clock, such as 23:00 or 11:00 PM (got: $value)"
+    fi
+    ;;
+  dayStart | dayEnd)
+    # The same two patterns bedtime takes, because they are the same kind of
+    # value and D29's 12-hour input has to work on all three or the page has
+    # two ideas of what a clock is. What this cannot check is the *pair*: one
+    # run of this script sees one key, so "the two are less than two hours
+    # apart" is the reader's clamp and is documented at the top rather than
+    # refused here.
+    if [[ $value =~ ^([01]?[0-9]|2[0-3]):[0-5][0-9]$ ]] \
+      || [[ $value =~ ^(1[0-2]|[1-9])(:[0-5][0-9])?[[:space:]]*[AaPp]\.?[Mm]?\.?$ ]]; then
+      jq -cn --arg v "$value" '$v'
+    else
+      die "$key must be a clock, such as 07:00 or 7 AM (got: $value)"
+    fi
+    ;;
+  chartFrame)
+    case "$value" in
+    rolling | day | hours) jq -cn --arg v "$value" '$v' ;;
+    *) die "chartFrame must be rolling, day or hours (got: $value)" ;;
+    esac
+    ;;
+  halfLifeHours)
+    integer_between "$value" 2 16 || die "halfLifeHours must be a whole number from 2 to 16 (got: $value)"
+    printf '%s' "$value"
+    ;;
+  sleepThresholdMg)
+    integer_between "$value" 10 100 || die "sleepThresholdMg must be a whole number from 10 to 100 (got: $value)"
+    printf '%s' "$value"
+    ;;
+  units)
+    case "$value" in
+    mg | cups) jq -cn --arg v "$value" '$v' ;;
+    *) die "units must be mg or cups (got: $value)" ;;
+    esac
+    ;;
+  cupMg)
+    integer_between "$value" 50 300 || die "cupMg must be a whole number from 50 to 300 (got: $value)"
+    printf '%s' "$value"
+    ;;
+  dailyCapEnabled)
+    case "$value" in
+    true | false) printf '%s' "$value" ;;
+    *) die "dailyCapEnabled must be true or false (got: $value)" ;;
+    esac
+    ;;
+  dailyCapMg)
+    integer_between "$value" 50 1000 || die "dailyCapMg must be a whole number from 50 to 1000 (got: $value)"
+    printf '%s' "$value"
+    ;;
+  quietPanel)
+    case "$value" in
+    true | false) printf '%s' "$value" ;;
+    *) die "quietPanel must be true or false (got: $value)" ;;
+    esac
+    ;;
+  barNumber)
+    case "$value" in
+    always | moving | never) jq -cn --arg v "$value" '$v' ;;
+    *) die "barNumber must be always, moving or never (got: $value)" ;;
+    esac
+    ;;
+  drinks)
+    die "drinks is a list, not a value: use --set-json drinks '[{\"label\":\"Coffee\",\"mg\":95}]'"
+    ;;
+  profile)
+    die "profile is an object, not a value: use --set-json profile '{\"smoker\":\"yes\"}'"
+    ;;
+  *)
+    die "unknown setting: $key"
+    ;;
+  esac
+}
+
+# The structured half of encode. The catalog is the only key that takes one,
+# and it is validated to the same bounds Presets.js clamps to - out loud here,
+# silently there, for the same reason the scalars are.
+encode_json() {
+  local key=$1 source=$2 raw
+
+  case "$source" in
+  -) raw=$(head -c $((max_json_bytes + 1))) ;;
+  @*)
+    local file=${source#@}
+    [[ -r $file ]] || die "cannot read $file" 4
+    raw=$(head -c $((max_json_bytes + 1)) -- "$file")
+    ;;
+  *) raw=$source ;;
+  esac
+
+  ((${#raw} <= max_json_bytes)) \
+    || die "$key is larger than $max_json_bytes bytes; refusing to store it" 4
+  jq -e . >/dev/null 2>&1 <<<"$raw" || die "$key is not valid JSON"
+
+  case "$key" in
+  drinks)
+    jq -e \
+      --argjson max "$catalog_max" --argjson lo "$mg_min" \
+      --argjson hi "$mg_max" --argjson lmax "$label_max" \
+      --argjson icons "$drink_icons" --argjson aliases "$drink_icon_aliases" '
+        type == "array" and length >= 1 and length <= $max
+        and all(.[];
+          type == "object"
+          and (.label | type) == "string"
+          and (.label | test("\\S"))
+          and (.label | length) <= $lmax
+          and (.mg | type) == "number"
+          and .mg >= $lo and .mg <= $hi and .mg == (.mg | floor)
+          and ((.detail // "") | type) == "string"
+          and ((.detail // "") | length) <= $lmax
+          and ((.id // "") | type) == "string"
+          and ((.icon // "") | type) == "string"
+          and ((.icon // "") as $i
+                | ($icons | index($i)) != null or ($aliases | index($i)) != null))
+      ' >/dev/null 2>&1 <<<"$raw" \
+      || die "drinks must be 1 to $catalog_max entries of {label, mg} with mg a whole number from $mg_min to $mg_max, and any icon one of the $(jq -r 'length' <<<"$drink_icons") the panel can draw"
+    ;;
+  profile)
+    # Every key must be a question this version asks, and every value one of
+    # that question's answers. A partial object is fine and is the ordinary
+    # case: an unanswered question is the neutral answer.
+    jq -e --argjson allowed "$profile_answers" '
+      type == "object"
+      and all(keys[]; . as $k | ($allowed | has($k)))
+      and all(to_entries[]; .value as $v | ($allowed[.key] | index($v)) != null)
+    ' >/dev/null 2>&1 <<<"$raw" \
+      || die "profile must be an object of $(jq -r 'keys | join(", ")' <<<"$profile_answers"), each set to one of its answers ($(jq -r 'to_entries | map("\(.key): \(.value | join("|"))") | join("; ")' <<<"$profile_answers"))"
+    ;;
+  *)
+    die "$key does not take a JSON value (try --set)"
+    ;;
+  esac
+
+  jq -c . <<<"$raw"
+}
+
+# The read-modify-write, shared by every action that changes the file. Takes
+# the whole new object on stdin so that --set, --set-json and --unset cannot
+# grow three different ideas of how a file is written.
+write_settings() {
+  local current=$1 temporary
+  temporary=$(mktemp "$settings_dir/.caffeine-curve.XXXXXX")
+  trap 'rm -f "$temporary"' EXIT
+  jq . <<<"$current" >"$temporary"
+  jq -e -s 'length == 1 and (.[0] | type == "object")' "$temporary" >/dev/null 2>&1 \
+    || die "refusing to write a settings file that is not a JSON object" 4
+  # Rename rather than truncate-and-write: the reader is a FileView watching
+  # this path, and a half-written object is a parse error in the shell process.
+  mv "$temporary" "$settings_file"
+  trap - EXIT
+  cat "$settings_file"
+}
+
+read_settings() {
+  [[ -s $settings_file ]] || { printf '{}\n'; return; }
+  (($(stat -c '%s' -- "$settings_file") <= max_bytes)) \
+    || die "$settings_file is larger than $max_bytes bytes; refusing to read it" 4
+  jq -e -s 'length == 1 and (.[0] | type == "object")' "$settings_file" >/dev/null 2>&1 \
+    || die "$settings_file is not a JSON object; fix it by hand or run --clear" 4
+  cat "$settings_file"
+}
+
+action=${1:---get}
+case "$action" in
+--get | "")
+  ensure_dir
+  exec 9<"$settings_dir"
+  flock -s 9
+  read_settings
+  ;;
+--defaults)
+  printf '%s\n' "$defaults" | jq .
+  ;;
+--clear)
+  ensure_dir
+  exec 9<"$settings_dir"
+  flock -x 9
+  rm -f "$settings_file"
+  printf '{}\n'
+  ;;
+--set)
+  shift
+  (($# >= 2 && $# % 2 == 0)) || die "--set takes one or more KEY VALUE pairs"
+
+  ensure_dir
+  exec 9<"$settings_dir"
+  flock -x 9
+
+  # Read-modify-write under the lock, so two panels (or a panel and a
+  # terminal) writing different keys at once cannot lose one of them.
+  current=$(read_settings)
+  while (($# >= 2)); do
+    encoded=$(encode "$1" "$2")
+    current=$(jq -c --arg k "$1" --argjson v "$encoded" '.[$k] = $v' <<<"$current")
+    shift 2
+  done
+
+  write_settings "$current"
+  ;;
+--set-json)
+  shift
+  (($# == 2)) || die "--set-json takes one KEY and one JSON source (a value, @FILE, or -)"
+
+  # Read the source before taking the lock: with `-` that is a wait on a pipe,
+  # and holding the settings directory's lock while blocked on stdin would
+  # stall every other writer.
+  encoded=$(encode_json "$1" "$2")
+
+  ensure_dir
+  exec 9<"$settings_dir"
+  flock -x 9
+
+  current=$(read_settings)
+  current=$(jq -c --arg k "$1" --argjson v "$encoded" '.[$k] = $v' <<<"$current")
+  write_settings "$current"
+  ;;
+--unset)
+  shift
+  (($# >= 1)) || die "--unset takes one or more KEYs"
+
+  ensure_dir
+  exec 9<"$settings_dir"
+  flock -x 9
+
+  current=$(read_settings)
+  while (($# >= 1)); do
+    # An unknown key is a typo, and deleting one silently would look like it
+    # worked. `drinks` is unsettable this way on purpose: that is how the
+    # catalog editor's own restore works, since absent means the shipped table.
+    case "$1" in
+    # The three keys that are unset rather than set. `drinks` and `profile` are
+    # how their editors restore a default, since absent means the shipped one;
+    # `metabolism` is D26's superseded picker, which outranks the profile while
+    # it is there, so switching to the profile's estimate has to be able to
+    # drop it. None of the three is settable through --set.
+    drinks | profile | metabolism) ;;
+    *) encode "$1" "$(jq -r --arg k "$1" '.[$k] // empty' <<<"$defaults")" >/dev/null ;;
+    esac
+    current=$(jq -c --arg k "$1" 'del(.[$k])' <<<"$current")
+    shift
+  done
+  write_settings "$current"
+  ;;
+--help | -h)
+  awk 'NR > 2 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' "$0"
+  ;;
+*)
+  die "unknown action: $action (try --help)"
+  ;;
+esac

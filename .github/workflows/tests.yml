@@ -1,0 +1,32 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+# `tests/run` is the whole suite and this workflow runs it and nothing else —
+# that is what the file was written for. It carries five checks: the manifest
+# assertion (jq), the engine under `node --test`, the hardcoded-colour and
+# Style.spacing greps (ripgrep), `omarchy plugin validate`, and qmllint.
+#
+# The last two skip themselves here, on purpose. Both need the Omarchy shell
+# installed — `omarchy` is the CLI, and qmllint is only meaningful against
+# `-I /usr/share/omarchy/shell`, since every QML file imports `qs.Commons` and
+# `qs.Ui` from it. A runner has neither, and a qmllint that cannot resolve the
+# shell's modules reports the imports rather than the code. Those two are the
+# dev loop's job (standing rule 3: `omarchy restart shell`, then grep the log);
+# what CI covers is everything that runs without a desktop.
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install jq and ripgrep
+        run: sudo apt-get update && sudo apt-get install -y jq ripgrep
+
+      - run: ./tests/run
