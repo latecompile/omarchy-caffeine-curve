@@ -151,13 +151,48 @@ Item {
 
   // By index rather than by timestamp: two drinks logged in the same second
   // are indistinguishable by ts, and the panel's list already has the index.
+  //
+  // D113: what comes out goes on the undo stack on the way. Both routes to a
+  // deletion — the `x` key and the ✕ on the row — come through here, so
+  // capturing it at this one point is what makes `u` cover the whole gesture
+  // rather than the keyboard half of it.
   function removeAt(index) {
     if (!root.loaded) return false
     if (!(index >= 0 && index < root.doses.length)) return false
     var next = root.doses.slice()
-    next.splice(index, 1)
+    var gone = next.splice(index, 1)[0]
     root.persist(next)
+    root.undoStack = Caffeine.pushUndo(root.undoStack, gone)
     return true
+  }
+
+  // ---------------------------------------------------------------- undo
+
+  // D113. The deletions this session can still take back, newest first.
+  //
+  // **In memory, and only for this session.** It is not in doses.json and it
+  // does not get a file of its own: undo is the tail of a gesture you are
+  // still in the middle of — you deleted the wrong row and you noticed — and a
+  // stack that survived a reboot would offer to resurrect a coffee from last
+  // Tuesday, which is not undo, it is a second archive nobody asked for. The
+  // one that already exists is append-only for exactly that reason (D44).
+  property var undoStack: []
+
+  // Puts the last deleted dose back and returns it, or null if there is
+  // nothing left to put back.
+  //
+  // It goes in through `persist` like any other write, so the log re-sorts and
+  // the restored dose lands at its own timestamp rather than at the top: a
+  // dose put back is a dose that was never gone, and it must not read as one
+  // logged just now. `logged` is deliberately *not* emitted — that signal
+  // pours the cup on the bar (BarWidget), and nothing was poured here.
+  function undoDelete() {
+    if (!root.loaded) return null
+    var step = Caffeine.popUndo(root.undoStack)
+    if (!step.dose) return null
+    root.undoStack = step.rest
+    root.persist([step.dose].concat(root.doses))
+    return step.dose
   }
 
   // The panel's "I actually drank that earlier" affordance — tapping the
@@ -181,6 +216,12 @@ Item {
   function clear() {
     if (!root.loaded) return
     root.persist([])
+    // D113. The stack goes with it. `clear` is the IPC wipe, not a row being
+    // removed, and after it the doses on the stack no longer relate to
+    // anything on screen — putting twenty-five of them back into an emptied
+    // log would be a partial restore wearing an undo's clothes, which is worse
+    // than the honest nothing.
+    root.undoStack = []
   }
 
   function levelNow(halfLifeHours) {

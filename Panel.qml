@@ -301,10 +301,12 @@ Panel {
   }
 
   // **D105's one key, and it is a cycle rather than a toggle.** `d` for day.
-  // Free: the letters this panel takes are a i m n p s t and their shifted
-  // forms, plus h j k l x which the stock PanelKeyCatcher eats before we see
-  // them — so `d` arrives through `handleTextKey` like every other letter here
-  // and needs no modifier handling and no fork of the component.
+  // Free: the letters this panel takes are a c d i m n p s t u and their
+  // shifted forms, plus h j k l x which the stock PanelKeyCatcher eats before
+  // we see them — so `d` arrives through `handleTextKey` like every other
+  // letter here and needs no modifier handling and no fork of the component.
+  // (The list is kept current as keys land — `c` at D112, `u` at D113 — because
+  // the next person to pick a letter reads it to find out what is free.)
   //
   // Panning is deliberately kept across the change. The framings are three
   // answers about the same stretch of time, so `d` on yesterday should leave
@@ -2788,6 +2790,38 @@ Panel {
     if (root.recentDoses.length <= 1) root.setCursor("drinks", 0)
   }
 
+  // ------------------------------------------------------------ D113
+  //
+  // **The other half of `x`, and it exists because the first half was shipped
+  // without it.** The report: a drink logged, deleted, and then two more taken
+  // by the same keypress held a beat too long — after which the only way back
+  // was remembering when those two had been and typing them in again. Every
+  // ingredient of that is this panel's own doing. `x` is one press with no
+  // confirmation (correctly — a dialog on every delete is worse), the rows it
+  // walks are eight pixels apart, and key repeat is the shell's, not ours.
+  //
+  // So the fix is not a guard on the delete. A confirmation would tax the
+  // hundreds of correct deletions to catch the rare wrong one, and an
+  // auto-repeat lockout would make a key that works feel broken. The fix is
+  // that the mistake stops being expensive: `u`, as many times as `x` was
+  // pressed, and the log is as it was.
+  function undoDelete() {
+    root.disarmPointer()
+    if (!root.store) return
+    var back = root.store.undoDelete()
+    if (!back) return
+    // Onto the row that came back, by the same re-find a nudge uses (D20).
+    // The log re-sorted on the way in, so the restored dose is at its own
+    // timestamp rather than at the top of the list, and a cursor left where it
+    // was would now be pointing at whatever slid into the empty slot.
+    //
+    // It is also the only thing on screen that says the undo worked. There is
+    // no toast in this plugin and this is not the phase to invent one — the
+    // row reappearing under a cursor that moved to meet it is the panel
+    // answering in the same register it answers a nudge in.
+    root.followDose(back.ts, back.mg)
+  }
+
   function nudgeCursor(minutes) {
     if (root.cursorSection !== "doses") return
     var entry = root.recentDoses[root.cursorIndex]
@@ -2920,6 +2954,16 @@ Panel {
     else if (text === "N") root.toggleNotes()
     else if (chevronBack) root.nudgeCursor(-Caffeine.NUDGE_MINUTES)
     else if (chevronForward) root.nudgeCursor(Caffeine.NUDGE_MINUTES)
+    // D113, beside the chevrons because these three are the keys that reach
+    // into the dose list — `x` is the fourth and it is not here only because
+    // the stock catcher eats it and hands it back as `onDeleteRequested`.
+    //
+    // The main page only, like `c` and for the same reason: every other page
+    // has returned above this line, and on those pages `x` removes a drink or
+    // a note, which are lists this stack knows nothing about. A `u` that
+    // half-worked depending on which page was up would be worse than one that
+    // is honestly absent from their cards.
+    else if (text === "u" || text === "U") root.undoDelete()
     // D95. Open and close rather than toggle twice, because a key that matches
     // a printed label does what the label says — "+ More" opens whether or not
     // it is open, "− Less" closes. "m" stays the toggle it has always been.
@@ -3096,6 +3140,18 @@ Panel {
       { keys: "1 – 5", what: "log a drink" },
       { keys: "← → h l", what: "move along a row" },
       { keys: "↵  Space", what: "log the highlighted drink" },
+      // **D113 moves "m" across from the right-hand column**, and it is the
+      // user's own placement. It reads better here than it did there: this is
+      // the run about the drinks — log one of the five, walk along them, log
+      // the one you walked to — and "show every drink" is the last question in
+      // that run rather than the fourth thing on a column about the chart.
+      //
+      // It also settles the shape. The right column has been the longer one
+      // since the share key landed, and putting `u` where "m" was would have
+      // made that nine against eleven; moving "m" instead leaves ten and ten,
+      // with the way out at the foot of the column you read first, which is
+      // where D105 put it and why.
+      { keys: "m", what: "show every drink" },
       // D95 took "- +" off this row and it was mandatory: those two keys open
       // and close More now, so the row was a lie the moment that landed. It is
       // a different question from whether the toggle gets a row of its own,
@@ -3125,7 +3181,26 @@ Panel {
       { keys: "6 – 0", what: "log one from More" },
       { keys: "↑ ↓ k j", what: "move between rows" },
       { keys: "x", what: "delete the highlighted dose" },
-      { keys: "m", what: "show every drink" },
+      // **D113, and the row above it is the whole argument for the slot.** A
+      // key that takes something back has to be read in the same glance as the
+      // key that took it away, or it is found after the damage rather than
+      // before — which, for the mistake this exists to fix, is the difference
+      // between a keypress and an evening spent remembering when you had your
+      // coffees. So it is not sorted in beside the other letters; it is
+      // adjacent to `x`, the way `D` is adjacent to `d` (D107).
+      //
+      // Four wordings were rendered against the column. `undo the last delete`
+      // is the shortest and was thrown out for "delete" as a noun: nothing
+      // else on this card names an operation, they all say what happens.
+      // `put the dose back` does not admit that you can press it more than
+      // once, which is the entire point. `put back the dose you deleted` says
+      // "the", same problem, and runs two characters past the widest row in
+      // the column, so it would have widened the card to be less true.
+      //
+      // This one is exactly as wide as `share this view as an image` — so the
+      // card does not grow by a pixel — and its "a" rather than "the" is the
+      // part doing the work: it says there may be more than one back there.
+      { keys: "u", what: "put back a dose you deleted" },
       { keys: "[  ]", what: "a day back, a day forward" },
       { keys: "t", what: "back to today" },
       { keys: "n", what: "write a note on this day" },

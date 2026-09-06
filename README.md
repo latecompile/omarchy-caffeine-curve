@@ -336,7 +336,9 @@ Press `?` in the panel for the full list.
 | `6`–`0` | log one from **More** |
 | `← → h l` / `↑ ↓ k j` | move the cursor |
 | `↵` `Space` | log the highlighted drink |
+| `m` | show every drink |
 | `x` | delete the highlighted dose |
+| `u` | put back a dose you deleted — once per deletion, as far back as this session goes |
 | `‹ ›` `-` `+` | shift a dose by 15 minutes, both ways and into the future |
 | `[` `]` | a day back, a day forward |
 | `{` `}` | a week back, a week forward |
@@ -344,7 +346,6 @@ Press `?` in the panel for the full list.
 | `p` | pin the day you are on, so it ghosts under today's curve — again, or at home, to clear it |
 | `n` | write a note on the day you are on |
 | `N` | the days you have noted |
-| `m` | show every drink |
 | `d` | how the chart is framed: now in the middle, a whole day, or the hours you choose |
 | `D` | the same, the other way round |
 | `c` | share the day as an image — 16:9, on the clipboard and in your screenshots folder |
@@ -354,6 +355,17 @@ Press `?` in the panel for the full list.
 
 The timeline keys are the first-party Clock panel's, so if you have met them
 anywhere in Omarchy you have met them there.
+
+**`x` has no confirmation, and `u` is why it does not need one.** Deleting is
+one press so that correcting the log stays cheap, which also means a key held a
+beat too long takes the two rows underneath. Press `u` once for each dose that
+went, and each comes back at the time it was actually drunk — not re-logged at
+the time you pressed the key. The ✕ on a row is the same delete and the same
+undo covers it.
+
+Undo is a session's worth: it remembers what *this* run of the shell deleted,
+and starts empty again after a restart. Nothing is written for it — the doses
+you have not deleted are the only thing on disk.
 
 ## The timeline, and notes on a day
 

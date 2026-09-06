@@ -527,6 +527,84 @@ test("pruning keeps 30 days and hands the rest back to be archived", () => {
   assert.equal(caffeine.prune([at(1, 95)], NOW, 30).expired.length, 0)
 })
 
+// ------------------------------------------------------------------- undo
+
+test("undo hands deletions back in the order they were deleted", () => {
+  // The bug that asked for D113: three doses taken by one held key. They are
+  // deleted oldest-first here on purpose — the order you delete in has nothing
+  // to do with the order they were drunk in, and the stack has to follow the
+  // deleting.
+  const morning = at(6, 95, "morning")
+  const noon = at(3, 120, "noon")
+  const late = at(1, 60, "late")
+
+  let stack = caffeine.pushUndo([], morning)
+  stack = caffeine.pushUndo(stack, noon)
+  stack = caffeine.pushUndo(stack, late)
+  assert.deepEqual(Array.from(stack, (dose) => dose.label), ["late", "noon", "morning"])
+
+  const first = caffeine.popUndo(stack)
+  assert.equal(first.dose.label, "late")
+  const second = caffeine.popUndo(first.rest)
+  assert.equal(second.dose.label, "noon")
+  const third = caffeine.popUndo(second.rest)
+  assert.equal(third.dose.label, "morning")
+
+  // And then it is empty, rather than repeating the last one forever.
+  const empty = caffeine.popUndo(third.rest)
+  assert.equal(empty.dose, null)
+  assert.deepEqual(Array.from(empty.rest), [])
+  assert.equal(caffeine.popUndo([]).dose, null)
+  assert.equal(caffeine.popUndo(null).dose, null)
+})
+
+test("the undo stack has a floor and a ceiling", () => {
+  let stack = []
+  for (let i = 0; i < caffeine.UNDO_DEPTH + 10; i++) stack = caffeine.pushUndo(stack, at(i, 95, `d${i}`))
+  assert.equal(stack.length, caffeine.UNDO_DEPTH)
+  // The oldest deletions fall off, not the newest: what you just did is what
+  // you are most likely to be taking back.
+  assert.equal(stack[0].label, `d${caffeine.UNDO_DEPTH + 9}`)
+  assert.equal(stack[stack.length - 1].label, `d${10}`)
+
+  assert.equal(caffeine.pushUndo([], at(1, 95), 2).length, 1)
+  assert.equal(caffeine.pushUndo([at(1, 95), at(2, 95)], at(3, 95), 2).length, 2)
+  assert.deepEqual(Array.from(caffeine.pushUndo([at(1, 95)], at(2, 95), 0)), [])
+
+  // Nothing worth putting back is not an entry on the stack. A `u` that
+  // restored an unparseable line would put a dose on the curve that the log
+  // itself would refuse to load.
+  assert.deepEqual(Array.from(caffeine.pushUndo([], null)), [])
+  assert.deepEqual(Array.from(caffeine.pushUndo([], { ts: NOW, mg: 0 })), [])
+  assert.equal(caffeine.pushUndo([at(1, 95)], "not a dose").length, 1)
+
+  // Junk already on the stack is stepped over rather than popped as a null
+  // undo, so one bad entry cannot make the key look broken.
+  const step = caffeine.popUndo([null, { ts: NOW, mg: "x" }, at(4, 110, "good")])
+  assert.equal(step.dose.label, "good")
+  assert.deepEqual(Array.from(step.rest), [])
+})
+
+test("a dose put back lands at its own time, not at the top of the log", () => {
+  // The panel deletes the middle dose and then undoes it. What comes back has
+  // to sort into the same slot it left — a restored dose that arrived at the
+  // head of the list would read as a coffee you just had, and would move the
+  // curve to match.
+  const log = caffeine.sanitizeDoses([at(1, 60, "late"), at(3, 120, "noon"), at(6, 95, "morning")])
+  const gone = log[1]
+  const without = log.filter((dose) => dose !== gone)
+  const stack = caffeine.pushUndo([], gone)
+
+  const step = caffeine.popUndo(stack)
+  const restored = caffeine.prune([step.dose].concat(without), NOW, 30).kept
+  assert.deepEqual(Array.from(restored, (dose) => dose.label), ["late", "noon", "morning"])
+  assert.deepEqual(plain(restored[1]), plain(gone))
+
+  // Byte for byte the log it started as: undo is not a re-log with a
+  // reconstructed timestamp, which is what the user was reduced to doing.
+  assert.equal(JSON.stringify(restored), JSON.stringify(log))
+})
+
 // ---------------------------------------------------------------- degenerate
 
 test("degenerate inputs stay finite", () => {

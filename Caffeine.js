@@ -930,6 +930,63 @@ function prune(doses, nowSeconds, days) {
   return { kept: kept, expired: expired }
 }
 
+// ------------------------------------------------------------- the undo stack
+
+// D113. How many deletions `u` can walk back.
+//
+// **One would have been the wrong answer to the bug that asked for this.** The
+// report is a held-down "x" taking three doses in a row, and an undo that only
+// reaches the last of them leaves you reconstructing the other two from memory
+// — which is the whole of what went wrong. So the stack is a stack.
+//
+// The ceiling is here to stop a key that has stuck growing the list for the
+// life of a session, not because depth costs anything: a deleted dose is two
+// numbers and a label, and twenty-five of them is a rounding error next to the
+// log they came out of.
+var UNDO_DEPTH = 25
+
+// Newest deletion first — deletion order, and deliberately *not* timestamp
+// order. What `u` puts back is the last thing you took away; the last thing
+// you took away is very often not the latest coffee you had, and a stack that
+// sorted itself by ts would put the wrong one back first for exactly the
+// held-key case this exists for.
+//
+// Nothing downstream leans on the order: the log re-sorts on the way back in,
+// through the same sanitizeDoses every other write goes through.
+function pushUndo(stack, dose, depth) {
+  var limit = Math.floor(finiteNumber(depth, UNDO_DEPTH))
+  if (!(limit > 0)) return []
+
+  var kept = sanitizeDose(dose)
+  var list = kept ? [kept] : []
+  if (stack && typeof stack.length === "number") {
+    for (var i = 0; i < stack.length && list.length < limit; i++) {
+      var held = sanitizeDose(stack[i])
+      if (held) list.push(held)
+    }
+  }
+  return list
+}
+
+// The dose to put back, and the stack without it.
+//
+// A malformed entry is stepped over rather than returned as an empty undo. The
+// two outcomes are indistinguishable from the keyboard — `u` either puts
+// something back or does nothing — and a key that does nothing when it had
+// something to do is the failure this feature exists to fix, so the tie goes
+// to looking further down the stack.
+function popUndo(stack) {
+  if (!stack || typeof stack.length !== "number") return { dose: null, rest: [] }
+  for (var i = 0; i < stack.length; i++) {
+    var dose = sanitizeDose(stack[i])
+    if (!dose) continue
+    var rest = []
+    for (var j = i + 1; j < stack.length; j++) rest.push(stack[j])
+    return { dose: dose, rest: rest }
+  }
+  return { dose: null, rest: [] }
+}
+
 // ------------------------------------------------------------ the model
 
 // Bateman one-compartment: what is left of `mg` taken `dtHours` ago.
