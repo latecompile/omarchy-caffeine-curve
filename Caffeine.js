@@ -70,6 +70,46 @@ var STRONG_DOSE_MG = 100
 var SHARE_NAME = "Caffeine Curve"
 var SHARE_URL = "github.com/latecompile/omarchy-caffeine-curve"
 
+// --------------------------------------------------------------------- about
+//
+// `a` opens a card that answers two questions and deliberately no others:
+// **which build is this**, and **where do I go when it misbehaves**.
+//
+// The version is restated here for the same reason the two names above are —
+// a JS resource cannot read the manifest — and tests/run pins it to
+// manifest.json alongside them. This one rots on a schedule the others do not:
+// it changes at every release, which is exactly when nobody is looking at it.
+// A card that names a build nobody shipped is worse than no card, because the
+// report it produces is unreproducible.
+var VERSION = "0.1.0"
+
+// The feed, and it earns a place on screen rather than only in the README
+// because the README is not open at eleven at night when the curve looks
+// wrong. The repo answers "is this fixed"; the feed answers "is it me" — which
+// is the question someone actually has, and it can be answered before there is
+// a fix to point at. tests/run pins this against the README so the two places
+// that name the author cannot drift apart.
+var AUTHOR_URL = "x.com/latecompile"
+
+// Label and value, in the order the questions get asked: what am I running,
+// where is the news, where is the code.
+function aboutRows() {
+  return [
+    { label: "version", value: VERSION },
+    { label: "updates", value: AUTHOR_URL },
+    { label: "source", value: SHARE_URL }
+  ]
+}
+
+// Under a rule and last, the way the estimate note sits on the keys card: what
+// the two addresses are *for*, said once in prose, rather than a word beside
+// each one that has to carry the distinction on its own. "already" is doing
+// the work — it says the feed is worth reading before you write anything.
+function formatAboutNote() {
+  return "If something looks wrong, the feed says whether it is already known. "
+    + "The repo is where it gets fixed."
+}
+
 // The saved file's name. Omarchy's own screenshots are
 // `screenshot-YYYY-MM-DD_HH-MM-SS.png` and these land in the same directory,
 // so they take the same shape with our own stem: sorted together, told apart

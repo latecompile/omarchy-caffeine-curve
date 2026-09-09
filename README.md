@@ -2,8 +2,9 @@
 
 ![Logging a drink, watching the curve cross bedtime, and comparing it against yesterday](demo.gif)
 
-An Omarchy bar widget. Log a coffee with one click, watch it decay in the bar,
-and see what is still in you at bedtime.
+An Omarchy bar widget by [x.com/latecompile](https://x.com/latecompile). Log a
+coffee with one click, watch it decay in the bar, and see what is still in you
+at bedtime.
 
 The bar shows a cup that empties as the caffeine does. Clicking it opens a
 panel with the day's curve, a row of drinks to tap, and — the point of the

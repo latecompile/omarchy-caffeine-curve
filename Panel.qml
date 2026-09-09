@@ -2958,7 +2958,7 @@ Panel {
       else if (text === "i" || text === "I") root.openIconPicker()
       else if (text === "a" || text === "A") root.startAddingDrink()
       else if (text === "s" || text === "S") root.closeCatalog()
-      else if (text === "?" || text === "/") root.showKeys = !root.showKeys
+      else if (text === "?" || text === "/") root.toggleKeys()
       return
     }
 
@@ -2966,7 +2966,7 @@ Panel {
       if (back) root.rowAdjust("profile", root.cursorIndex, -1)
       else if (forward) root.rowAdjust("profile", root.cursorIndex, 1)
       else if (text === "s" || text === "S") root.closeProfile()
-      else if (text === "?" || text === "/") root.showKeys = !root.showKeys
+      else if (text === "?" || text === "/") root.toggleKeys()
       return
     }
 
@@ -2974,7 +2974,7 @@ Panel {
       if (back) root.adjustSetting(root.cursorIndex, -1)
       else if (forward) root.adjustSetting(root.cursorIndex, 1)
       else if (text === "s" || text === "S") root.closeSettings()
-      else if (text === "?" || text === "/") root.showKeys = !root.showKeys
+      else if (text === "?" || text === "/") root.toggleKeys()
       // D109, last, so it can never take a key this page already spends. It
       // answers or it does not; an unmapped letter falls through to nothing,
       // which is what every letter on this page did before.
@@ -2987,7 +2987,7 @@ Panel {
     // and "N" toggles it back the way "s" toggles the settings page.
     if (root.showNotes) {
       if (text === "N") root.closeNotes()
-      else if (text === "?" || text === "/") root.showKeys = !root.showKeys
+      else if (text === "?" || text === "/") root.toggleKeys()
       return
     }
 
@@ -3049,7 +3049,13 @@ Panel {
     // means one thing per page, and each page's own card is true of that page.
     else if (text === "c" || text === "C") root.captureShare()
     else if (text === "s" || text === "S") root.openSettings()
-    else if (text === "?" || text === "/") root.showKeys = !root.showKeys
+    // The main page only, like `c` and `u` above it, and here the rule has
+    // teeth rather than being a convention: on the catalog page `a` already
+    // means "add a drink", and it got that letter first. Every other page has
+    // returned above this line, so the two never meet — which is the whole of
+    // why "a key means one thing per page" is worth keeping to.
+    else if (text === "a" || text === "A") root.toggleAbout()
+    else if (text === "?" || text === "/") root.toggleKeys()
     else root.logDigit(text)
   }
 
@@ -3106,6 +3112,35 @@ Panel {
   // mentioned them, which is the reason this phase exists. The footer states
   // the five that matter; "?" opens the full list over the panel.
   property bool showKeys: false
+
+  // The other card, and it is a card rather than a settings row on purpose.
+  // "About" in a settings list is a row you scroll past for a year; over the
+  // panel it is the same gesture as "?" and lands in the same place, which is
+  // the only place this plugin has ever put something you read and dismiss.
+  //
+  // The two are mutually exclusive because they are the same surface. Nothing
+  // enforces that structurally — they are two bools — so it is enforced where
+  // they are set, and both keys go through a function for that reason.
+  property bool showAbout: false
+
+  // `a` is a main-page key, so the card can only be *raised* there — but `s`
+  // and `N` are main-page keys too, and either would otherwise leave it
+  // floating over a page it is not about. Gated rather than cleared, in one
+  // predicate rather than in every opener: the flag survives the trip, so a
+  // card you left up is up again when you come back, which is what the keys
+  // card does across pages already.
+  readonly property bool aboutVisible: root.showAbout
+    && !root.showSettings && !root.showCatalog && !root.showNotes
+
+  function toggleAbout() {
+    root.showKeys = false
+    root.showAbout = !root.showAbout
+  }
+
+  function toggleKeys() {
+    root.showAbout = false
+    root.showKeys = !root.showKeys
+  }
 
   // In the order you would need them: log, move, log the one you moved to,
   // correct a mistake, find the rest. Everything else is behind "?", which is
@@ -3241,6 +3276,16 @@ Panel {
       // down, so the card says both in the words that separate them (D65).
       { keys: "N", what: "the days you have noted" },
       { keys: "s", what: "settings" },
+      // **Beside "s", above "Esc", and that costs the card its balance.** The
+      // columns have been ten and ten since D113 and this makes them eleven
+      // and ten; the alternative was the foot of the right column, whose tail
+      // is "d D c" — the chart and what comes off it — where "about" would be
+      // the one row in that run that is not about the chart. Rendered both
+      // ways: an eleventh row on a card this size is a row, and a key filed
+      // under the wrong subject is a key nobody finds. So the run reads
+      // "settings, about, close", which is the order you would need them in,
+      // and D105's way out stays at the foot of the column you read first.
+      { keys: "a", what: "version, and where to report" },
       // **D105 puts the way out at the foot of the left column**, which is the
       // user's own placement and is the same move D103 made on the catalog
       // card. It takes "Esc" off the bottom-right corner where every card in
@@ -3351,6 +3396,12 @@ Panel {
     if (root.editingSetting) root.endEditing()
     else if (root.showIconPicker) root.closeIconPicker()
     else if (root.showKeys) root.showKeys = false
+    // Beside the keys card because it is the same surface at the same depth,
+    // not under it: the two cannot both be up, so their order here is a
+    // statement about where they sit rather than a race between them. The
+    // *visible* one, so an Esc on the settings page closes the settings page
+    // rather than being spent on a card nobody can see.
+    else if (root.aboutVisible) root.showAbout = false
     else if (root.showCatalog) root.closeCatalog()
     else if (root.showProfile) root.closeProfile()
     else if (root.showSettings) root.closeSettings()
@@ -5358,6 +5409,124 @@ Panel {
         }
       }
     }
+
+      // ------------------------------------------------------------ the about card
+      //
+      // The keys card's chrome, deliberately down to the scrim opacity and the
+      // border: this is the second thing that opens over the panel and a
+      // second visual idiom for it would say the two are different kinds of
+      // thing. They are not — both are read and dismissed, and both are what a
+      // key on the main card promises.
+      //
+      // What it carries is a build and two addresses, which is the whole job.
+      // A version nobody can read turns "it does this on mine" into a
+      // conversation about which build "mine" is, and the feed is the half of
+      // the answer that exists before a fix does.
+      Rectangle {
+        anchors.fill: parent
+        visible: root.aboutVisible
+        color: Util.alpha(Color.popups.background, 0.82)
+
+        MouseArea {
+          anchors.fill: parent
+          hoverEnabled: true
+          onClicked: root.showAbout = false
+        }
+
+        BorderSurface {
+          id: aboutCard
+          anchors.centerIn: parent
+          width: Math.min(parent.width, aboutContent.implicitWidth + Style.spacing.panelPadding * 2)
+          height: aboutContent.implicitHeight + Style.spacing.panelPadding * 2
+          color: Color.popups.background
+          borderSpec: Border.flat(root.accent, Style.normalBorderWidth)
+          radius: Style.cornerRadius
+
+          MouseArea { anchors.fill: parent; onClicked: {} }
+
+          Column {
+            id: aboutContent
+            anchors.centerIn: parent
+            spacing: Style.spacing.lg
+
+            PanelSectionHeader {
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              text: "ABOUT"
+            }
+
+            // The name at body weight under the header, because the header is
+            // the section and this is the thing. It is the manifest's name and
+            // the share card's, which is the point of there being one of them.
+            Text {
+              textFormat: Text.PlainText
+              text: Caffeine.SHARE_NAME
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              font.bold: true
+            }
+
+            // Label left in accent, value right in foreground — the keys
+            // card's own grammar, so the two read as one family. It puts the
+            // URLs in the quieter colour, which is the right way round here:
+            // what you are looking for is "where do I go for news", and the
+            // label is the question.
+            Column {
+              spacing: Style.spacing.sm
+
+              Repeater {
+                model: Caffeine.aboutRows()
+
+                Row {
+                  required property var modelData
+                  Text {
+                    textFormat: Text.PlainText
+                    width: Math.ceil(aboutLabelMetrics.width) + Style.spacing.xxl
+                    text: modelData.label
+                    color: root.accent
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.bold: true
+                  }
+                  Text {
+                    textFormat: Text.PlainText
+                    text: modelData.value
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                  }
+                }
+              }
+            }
+
+            // Under a rule and last, which is where the keys card puts its
+            // estimate note and for the same reason: prose set among labelled
+            // values reads as another value.
+            PanelSeparator { foreground: root.foreground }
+
+            Text {
+              width: Math.min(implicitWidth, aboutCard.width - Style.spacing.panelPadding * 2)
+              textFormat: Text.PlainText
+              text: Caffeine.formatAboutNote()
+              color: Qt.darker(root.foreground, 1.8)
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+          }
+        }
+
+        // One width for the labels, measured off the widest, the same way the
+        // keys card and the dose rows are measured.
+        TextMetrics {
+          id: aboutLabelMetrics
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+          font.bold: true
+          text: "version"
+        }
+      }
 
     // --------------------------------------------------------- the share stage
     //

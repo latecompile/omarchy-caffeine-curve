@@ -33,6 +33,26 @@ rg -q "^var SHARE_URL = \"${homepage#https://}\"\$" Caffeine.js || {
   exit 1
 }
 
+# The About card names the build, and that is the one restated field that
+# changes on a schedule — at every release, which is exactly when nobody looks
+# at it. A card reporting a version nobody shipped turns a bug report into a
+# conversation about which build "mine" is.
+version=$(jq -r .version manifest.json)
+rg -q "^var VERSION = \"$version\"\$" Caffeine.js || {
+  echo "VERSION does not match manifest .version ($version)" >&2
+  exit 1
+}
+
+# The author's feed is named in two places nobody edits together: the card the
+# `a` key opens and the line at the top of the README. There is no manifest
+# field to pin it to, so they are pinned to each other.
+handle=$(rg -o -r '$1' '^var AUTHOR_URL = "(.+)"$' Caffeine.js)
+[[ -n $handle ]] || { echo "AUTHOR_URL not found in Caffeine.js" >&2; exit 1; }
+rg -qF "$handle" README.md || {
+  echo "README does not name AUTHOR_URL ($handle)" >&2
+  exit 1
+}
+
 # Colours must come from qs.Commons.Color so they re-bind when the theme swaps.
 # A literal hex anywhere in the QML is an instant fail in review.
 ! rg -q '#[0-9a-fA-F]{3,8}\b' -- *.qml

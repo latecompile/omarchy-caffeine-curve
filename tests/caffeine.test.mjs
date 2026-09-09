@@ -3143,6 +3143,24 @@ test("the only definition of a cup there is says what it is and not how big", ()
   for (const units of ["mg", "cups"]) assert.doesNotMatch(note(units), /ml|fl oz/)
 })
 
+test("the about card carries a build and the two addresses, in that order", () => {
+  // The card's Repeater reads `label` and `value` off each row, so the shape
+  // is load-bearing in a way the strings are not. tests/run pins the strings
+  // to manifest.json and the README; this pins what the QML destructures.
+  const rows = caffeine.aboutRows()
+  assert.deepEqual(Array.from(rows, (row) => row.label), ["version", "updates", "source"])
+  for (const row of rows) assert.ok(row.value.length > 0, `${row.label} has no value`)
+  assert.equal(rows[0].value, caffeine.VERSION)
+  assert.equal(rows[1].value, caffeine.AUTHOR_URL)
+  assert.equal(rows[2].value, caffeine.SHARE_URL)
+
+  // The note is the only thing on the card that says why there are two
+  // addresses rather than one, so it has to distinguish them.
+  const note = caffeine.formatAboutNote()
+  assert.match(note, /feed/)
+  assert.match(note, /repo/i)
+})
+
 test("a share lands beside the shell's own screenshots and sorts with them", () => {
   // Omarchy writes `screenshot-YYYY-MM-DD_HH-MM-SS.png` into the same
   // directory, so ours takes the same shape with its own stem: the two sort
