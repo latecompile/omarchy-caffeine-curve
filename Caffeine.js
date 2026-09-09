@@ -2161,6 +2161,39 @@ function totalInRange(doses, fromSeconds, toSeconds_) {
   return total
 }
 
+// How many rows RECENT will draw. A list that has to be scrolled is a second
+// scrolling region inside a panel that already has one, so the list stops
+// rather than grows — the route to the drinks it is not showing is the pan.
+var RECENT_ROWS = 10
+
+// The rows under RECENT: the drinks inside a stretch of time, newest first,
+// paired with **their positions in the caller's own array**. The index is what
+// `x` and the nudge chevrons act on, so it has to be a position in the log the
+// panel is holding and not in a sorted copy of it — which is also why nothing
+// here re-sorts. Store hands out a sanitized, newest-first list already.
+//
+// `to` may be null, and that is the home case rather than an oversight: RECENT
+// at home is the last day's worth *and* everything planned into the future
+// (D20), because a coffee set for this evening is a row you must still be able
+// to nudge or delete. A panned window passes both bounds — there the list is
+// the drinks on the chart you are reading, and a day you have walked back to
+// has an end as well as a beginning.
+function dosesInRange(doses, fromSeconds, toSeconds_, limit) {
+  var out = []
+  if (!doses || typeof doses.length !== "number") return out
+  var from = toSeconds(fromSeconds)
+  var to = toSeconds_ === null || toSeconds_ === undefined ? null : toSeconds(toSeconds_)
+  var cap = Math.max(0, Math.floor(finiteNumber(limit, RECENT_ROWS)))
+  for (var i = 0; i < doses.length && out.length < cap; i++) {
+    var dose = sanitizeDose(doses[i])
+    if (!dose) continue
+    if (dose.ts < from) continue
+    if (to !== null && dose.ts >= to) continue
+    out.push({ index: i, dose: doses[i] })
+  }
+  return out
+}
+
 // How far back the timeline goes, in whole days: to the day of the oldest
 // dose on file and no further. Retention prunes at RETENTION_DAYS, so this is
 // never more than that. Whole days rather than raw seconds so that a day step
@@ -2244,18 +2277,33 @@ function levelOverRangeShifted(doses, fromSeconds, toSeconds_, halfLifeHours, co
   return out
 }
 
+// Midnight to midnight around a moment, in local time. Pulled out of
+// dayTotalMg because the total was not the only thing that wanted it: in the
+// rolling framing the caption reports the *calendar day* the window is centred
+// on, so RECENT has to list the drinks of that same day or the two disagree
+// under one heading. One definition, so they cannot drift.
+//
+// Built with setHours rather than by rounding the epoch to 86400, because a
+// local day is 23 or 25 hours long twice a year and the arithmetic version is
+// wrong on both of those days.
+function dayRangeAt(atSeconds) {
+  var start = new Date(toSeconds(atSeconds) * 1000)
+  start.setHours(0, 0, 0, 0)
+  var from = Math.floor(start.getTime() / 1000)
+  var end = new Date(start.getTime())
+  end.setDate(end.getDate() + 1)
+  return { from: from, to: Math.floor(end.getTime() / 1000) }
+}
+
 // The total logged on the local day a moment falls in. The pinned day's label
 // wants a figure, and it is the one number that says whether the comparison is
 // worth looking at.
 function dayTotalMg(doses, atSeconds) {
-  var start = new Date(toSeconds(atSeconds) * 1000)
-  start.setHours(0, 0, 0, 0)
-  var from = Math.floor(start.getTime() / 1000)
-  var to = from + SECONDS_PER_DAY
+  var range = dayRangeAt(atSeconds)
   var list = sanitizeDoses(doses)
   var total = 0
   for (var i = 0; i < list.length; i++) {
-    if (list[i].ts >= from && list[i].ts < to) total += list[i].mg
+    if (list[i].ts >= range.from && list[i].ts < range.to) total += list[i].mg
   }
   return total
 }

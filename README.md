@@ -374,6 +374,13 @@ a time, `{` and `}` a week, and `t` brings it home. It stops going back at the
 oldest drink still on file, because further back is not a record of empty days
 but of days that were thrown away.
 
+**The list of drinks under the chart goes with it.** Pan to Saturday and the
+rows are Saturday's, under a heading that says so — which means `x`, `‹ ›` and
+the ✕ reach a drink you logged days ago, and correcting the log is not
+something you can only do on the day. Logging a new drink brings the panel
+home first, because a drink is logged at now and the panel should be showing
+where it landed.
+
 `d` changes what a window *is*. By default it is twelve hours each side of
 now, which always contains the present and is what the bedtime verdict above
 the chart is about. Press `d` and it becomes a whole day from a time you set;

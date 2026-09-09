@@ -2569,6 +2569,105 @@ test("the caption's total is the window on screen once the user has said what a 
   assert.equal(caffeine.totalInRange(null, window.from, window.to), 0)
 })
 
+test("RECENT lists the drinks in the window it is handed, with the log's own indices", () => {
+  // The whole point of the pair: `x` and the nudge chevrons act on
+  // `entry.index`, so a row's index has to address the caller's array. A
+  // helper that sorted, filtered or de-duplicated on the way out would delete
+  // the wrong drink.
+  const doses = [at(1, 95, "flat white"), at(30, 125, "cold brew"), at(31, 60, "tea")]
+  const rows = caffeine.dosesInRange(doses, NOW - 24 * HOUR, null, 10)
+  assert.deepEqual(Array.from(rows, (row) => row.index), [0])
+  assert.equal(rows[0].dose, doses[0])
+
+  // A window with both bounds is the panned case: yesterday's two drinks, and
+  // not the one logged an hour ago.
+  const yesterday = caffeine.dosesInRange(doses, NOW - 32 * HOUR, NOW - 24 * HOUR, 10)
+  assert.deepEqual(Array.from(yesterday, (row) => row.index), [1, 2])
+  assert.deepEqual(Array.from(yesterday, (row) => row.dose.label), ["cold brew", "tea"])
+
+  // Half open at the top, the same as totalInRange: a drink at the instant a
+  // window ends belongs to the next one, so a day step cannot show it twice.
+  const edge = [{ ts: NOW - 24 * HOUR, mg: 95 }]
+  assert.equal(caffeine.dosesInRange(edge, NOW - 32 * HOUR, NOW - 24 * HOUR, 10).length, 0)
+  assert.equal(caffeine.dosesInRange(edge, NOW - 24 * HOUR, NOW, 10).length, 1)
+})
+
+test("RECENT's open right-hand end is what keeps a planned drink editable", () => {
+  // D20 puts a dose in the future; the list is the only place it can be
+  // nudged back or deleted. A null upper bound is that, and it is the home
+  // case rather than a special case.
+  const doses = [at(-3, 95, "planned"), at(2, 125, "drunk")]
+  const rows = caffeine.dosesInRange(doses, NOW - 24 * HOUR, null, 10)
+  assert.deepEqual(Array.from(rows, (row) => row.dose.label), ["planned", "drunk"])
+  // Undefined reads as null, so a caller that simply omits the bound gets the
+  // same list rather than an empty one.
+  assert.equal(caffeine.dosesInRange(doses, NOW - 24 * HOUR, undefined, 10).length, 2)
+})
+
+test("RECENT stops at RECENT_ROWS rather than growing a scrolling region", () => {
+  const doses = []
+  for (let i = 0; i < 20; i++) doses.push(at(i, 95))
+  assert.equal(caffeine.dosesInRange(doses, NOW - 24 * HOUR, null).length, caffeine.RECENT_ROWS)
+  assert.equal(caffeine.dosesInRange(doses, NOW - 24 * HOUR, null, 3).length, 3)
+  // The cap counts rows kept, not rows walked: a limit cannot be spent on
+  // doses outside the window.
+  const mixed = [at(-1, 95), at(40, 125), at(41, 60), at(2, 80)]
+  assert.deepEqual(
+    Array.from(caffeine.dosesInRange(mixed, NOW - 24 * HOUR, null, 2), (row) => row.index),
+    [0, 3])
+})
+
+test("a calendar day is midnight to the next midnight, not 86400 seconds", () => {
+  // Rounding the epoch to a multiple of 86400 is the version that is wrong on
+  // the two days a year a local day is 23 or 25 hours long. Asserted as a
+  // property rather than against a fixed zone, so it holds on any machine.
+  for (const hoursAgo of [0, 5, 30, 200, 4000]) {
+    const range = caffeine.dayRangeAt(NOW - hoursAgo * HOUR)
+    const from = new Date(range.from * 1000)
+    const to = new Date(range.to * 1000)
+    assert.equal(from.getHours(), 0)
+    assert.equal(to.getHours(), 0)
+    assert.equal(from.getMinutes() + from.getSeconds(), 0)
+    // One date later, whatever that cost in seconds.
+    assert.equal(to.getDate(), new Date(from.getTime() + 26 * HOUR * 1000).getDate())
+    assert.ok(Math.abs(range.to - range.from - DAY) <= HOUR)
+  }
+})
+
+test("RECENT's rows and the caption's total are one statement about one day", () => {
+  // The rolling caption reports the calendar day its window is centred on, so
+  // the rows have to be that day's too. Read off the *window* instead and a
+  // drink before the window opens is counted in the heading and missing from
+  // the list underneath it — which is what this pins.
+  const nine = localTs(2025, 8, 1, 9, 0)
+  const doses = [
+    { ts: nine + 5 * HOUR, mg: 125 },   // 14:00, inside a window centred at 21:00
+    { ts: nine, mg: 100 },              // 09:00, on the window's very edge
+    { ts: nine - 2 * HOUR, mg: 80 }     // 07:00, before it opens, same calendar day
+  ]
+  const centre = nine + 12 * HOUR
+  const window = caffeine.frameWindowAt("rolling", centre, "07:00", "00:00")
+  const range = caffeine.dayRangeAt(window.anchor)
+
+  const rows = caffeine.dosesInRange(doses, range.from, range.to, 10)
+  const listed = Array.from(rows, (row) => row.dose.mg).reduce((a, b) => a + b, 0)
+  assert.equal(rows.length, 3)
+  assert.equal(listed, caffeine.dayTotalMg(doses, window.anchor))
+
+  // The window on its own opens at 09:00 and so drops the 07:00 drink: two
+  // rows under a heading that says 305.
+  assert.equal(caffeine.dosesInRange(doses, window.from, window.to, 10).length, 2)
+})
+
+test("RECENT survives a log it was handed junk in", () => {
+  assert.equal(caffeine.dosesInRange(null, 0, null, 10).length, 0)
+  assert.equal(caffeine.dosesInRange(undefined, 0, null, 10).length, 0)
+  const doses = [null, { ts: "x", mg: 95 }, { ts: NOW, mg: 0 }, at(1, 95)]
+  assert.deepEqual(
+    Array.from(caffeine.dosesInRange(doses, NOW - 24 * HOUR, null, 10), (row) => row.index),
+    [3])
+})
+
 test("the floor is a whole number of days, so a clamped pan stays on its grid", () => {
   const doses = [at(50, 125)]
   const floor = caffeine.clampPanOffset(-99 * DAY, doses, NOW)

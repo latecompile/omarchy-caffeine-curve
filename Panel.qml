@@ -964,10 +964,8 @@ Panel {
   // into a section that did not exist an instant earlier and
   // `onCursorSectionsChanged` runs in the same turn — it finds `doses` present
   // by then, because the store persists synchronously and the section list is
-  // a binding over the same doses. And **logging from a panned timeline** puts
-  // the cursor on a dose that is not on the chart you are reading, which is
-  // correct (RECENT is always the last day, whatever the curve is showing) and
-  // which since D97 also scrolls the page to it.
+  // a binding over the same doses. And **logging from a panned timeline**
+  // comes home first, below.
   //
   // **What this costs, stated rather than discovered: `↵` on a dose row does
   // nothing.** `activateCursor` has no `doses` branch, so the key that logged
@@ -976,8 +974,19 @@ Panel {
   // and its amount pill, and inventing an Enter action for it is a new
   // decision rather than the consequence of this one. What is not acceptable
   // is nobody having noticed.
+  //
+  // **Logging comes home, and that is this phase's doing rather than a
+  // flourish.** The note above used to end "the cursor lands on a dose that is
+  // not on the chart you are reading, which is correct" — true only while
+  // RECENT was always today's. Now that the list follows the window, a drink
+  // logged from Saturday would land in neither half of the panel: not on the
+  // curve, which is Saturday's, and not in the rows, which are Saturday's too.
+  // The press would do nothing you could see. A drink is logged at now, so the
+  // panel goes to now — the same `t` the user would have pressed themselves,
+  // and the resample lands before `followDose` looks for the row.
   function logPreset(preset) {
     if (!store || !preset) return
+    root.panHome()
     var dose = store.add(preset.mg, Presets.labelOf(preset))
     root.showAllPresets = false
     if (dose) root.followDose(dose.ts, dose.mg)
@@ -996,16 +1005,80 @@ Panel {
     return true
   }
 
-  // The list under "Recent" — the last day's worth, newest first. Doses older
-  // than the curve's window are still on file and still counted; they just
-  // stop being something you would want to correct by hand.
-  readonly property var recentDoses: {
-    var out = []
-    var cutoff = root.windowSeconds - 24 * 3600
-    for (var i = 0; i < doses.length && out.length < 10; i++) {
-      if (doses[i].ts >= cutoff) out.push({ index: i, dose: doses[i] })
-    }
-    return out
+  // The list under "Recent" — **the drinks on the chart you are reading**,
+  // newest first. At home that is the last day's worth; panned, it is the day
+  // you have walked back to.
+  //
+  // It was the last day's worth unconditionally until here, and the note at
+  // D104 called that correct — "RECENT is always the last day, whatever the
+  // curve is showing". Reading it as a report rather than as a design, it is
+  // the panel freezing: you pan to Saturday, the caption says Saturday, the
+  // curve is Saturday's, and the ten rows underneath are still today's, with
+  // today's `x` and today's chevrons on them. There is no way to correct a
+  // drink you logged yesterday, which is exactly the correction people want,
+  // and the list gives no sign that it is not about the day above it.
+  //
+  // So the list follows the window, and the two halves of the panel are about
+  // one day again. What that buys, beyond the list being true: `x` and `‹ ›`
+  // reach a past day's doses, because the rows they act on are that day's.
+  //
+  // **Home keeps its own bounds rather than the window's**, and deliberately.
+  // A rolling frame is twelve hours each side of now, and handing RECENT that
+  // `from` would drop this morning's coffee off the list at teatime — the list
+  // is "the last day", which is a longer memory than the chart's left edge on
+  // purpose, and its open right-hand end is what keeps a dose planned into the
+  // future (D20) somewhere you can still nudge or delete it.
+  //
+  // **And panned, "which day" is the caption's question, already answered.**
+  // `viewDayLine` splits on `anchoredFrame` for a reason that applies here
+  // word for word: an anchored window *is* a day, so the window is the answer;
+  // a rolling one is twelve hours either side of a moment and is not a day at
+  // all, so the caption reports the calendar day it is centred on. Written the
+  // other way round — the window in both framings — the rolling caption would
+  // read "2 days ago · 305 mg" over three rows totalling 225, because a coffee
+  // at 08:52 falls outside a window that opens at 11:08. The heading, the
+  // total and the rows have to be one statement about one day, so this reads
+  // the same `anchoredFrame` the caption does.
+  readonly property var recentWindow: {
+    if (!root.panned)
+      return { from: root.windowSeconds - Caffeine.SECONDS_PER_DAY, to: null }
+    if (root.anchoredFrame) return { from: root.fromTs, to: root.toTs }
+    return Caffeine.dayRangeAt(root.viewAnchorTs)
+  }
+
+  readonly property var recentDoses: Caffeine.dosesInRange(
+    root.doses, root.recentWindow.from, root.recentWindow.to, Caffeine.RECENT_ROWS)
+
+  // Panning shortens RECENT without changing the *section* list, so
+  // `onCursorSectionsChanged` never fires and its clamp cannot help: the same
+  // shape as `onDrinkSlotCountChanged` and the same one-line answer. Walk to
+  // the eighth row of a busy day, press `[`, and without this the cursor is
+  // pointing past the end of a quiet one — where `x` and the nudge read an
+  // undefined entry and silently do nothing.
+  onRecentDosesChanged: {
+    if (root.cursorSection === "doses" && root.cursorIndex >= root.recentDoses.length)
+      root.setCursor("doses", root.recentDoses.length - 1)
+  }
+
+  // The list's own name for the day it is about. "RECENT" is true at home and
+  // wrong one press of `[` later, and this header is the only label that sits
+  // *with* the rows — the caption that names the day is up beside the chart,
+  // half a panel away, which is far enough that the rows read as unlabelled.
+  // Same words as the caption, so the two are recognisably one statement.
+  readonly property string recentHeading: root.panned
+    ? Caffeine.formatDayOffset(root.viewAnchorTs, root.nowSeconds).toUpperCase()
+    : "RECENT"
+
+  // **"how long ago" is a column about now, so it goes when the list is not.**
+  // On a day you have walked back to it reads "76h" — arithmetic that is
+  // correct, useless, and the widest thing in the row, sized by
+  // `columnSamples` so it pushes the clock and the amount along with it. The
+  // header now says which day this is and the clock says when in it; the hours
+  // between then and now are not a third opinion anybody asked for. Emptied
+  // rather than hidden: the width is measured off the same strings, so an
+  // empty column measures zero and the row closes up on its own.
+  function elapsedColumnOf(ts) {
+    return root.panned ? "" : root.elapsedTextOf(ts)
   }
 
   // **There is no line about the doses the list is not showing (D110).** There
@@ -1104,7 +1177,7 @@ Panel {
       if (candidate.length > amount.length) amount = candidate
       candidate = root.clockOf(dose.ts)
       if (candidate.length > clock.length) clock = candidate
-      candidate = root.elapsedTextOf(dose.ts)
+      candidate = root.elapsedColumnOf(dose.ts)
       if (candidate.length > ago.length) ago = candidate
     }
     return { amount: amount, clock: clock, ago: ago }
@@ -4464,7 +4537,7 @@ Panel {
                 visible: root.recentDoses.length > 0
                 foreground: root.foreground
                 fontFamily: root.fontFamily
-                text: "RECENT"
+                text: root.recentHeading
               }
 
               Column {
@@ -4485,7 +4558,7 @@ Panel {
                     label: modelData.dose.label
                     amountText: root.amountTextOf(modelData.dose.mg)
                     clock: root.clockOf(modelData.dose.ts)
-                    ago: root.elapsedTextOf(modelData.dose.ts)
+                    ago: root.elapsedColumnOf(modelData.dose.ts)
                     amountWidth: Math.ceil(amountMetrics.width)
                     clockWidth: Math.ceil(clockMetrics.width)
                     agoWidth: Math.ceil(elapsedMetrics.width)
