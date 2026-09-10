@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "latecompile.caffeine-curve",
   "name": "Caffeine Curve",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": "Late Compile",
   "license": "MIT",
   "description": "Log a coffee with one click, watch it decay in the bar, and see what is still in you at bedtime.",
