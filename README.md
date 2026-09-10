@@ -420,7 +420,7 @@ beside what you logged; the reading is yours.
 
 ## The week
 
-![Seven days as bars, each stacked from that day's drinks and headed by the day's total](preview_2.png)
+![Seven days as bars, each stacked from that day's drinks and headed by the day's total](weekly.png)
 
 `w` swaps the curve for the last seven days, a bar each, today on the right.
 Every bar is that day's drinks stacked earliest at the bottom, sized by
