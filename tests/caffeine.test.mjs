@@ -3228,6 +3228,55 @@ test("each weekly bar holds that day's drinks in order, plus its total", () => {
   assert.equal(caffeine.weekDayDoses(null, noon).length, 7)
 })
 
+test("the weekly bars pan back to the oldest dose's week and no further", () => {
+  const noon = localTs(2025, 8, 3, 12, 0)
+  const dayOf = (y, m, d, h, min, mg) =>
+    ({ ts: localTs(y, m, d, h, min), mg, label: "test" })
+
+  // Nothing to go back to: an empty log, a log of only today, or only future.
+  assert.equal(caffeine.weekPanDaysAvailable([], noon), 0)
+  assert.equal(caffeine.weekPanDaysAvailable([dayOf(2025, 8, 3, 8, 0, 95)], noon), 0)
+  assert.equal(caffeine.weekPanDaysAvailable(
+    [{ ts: noon + HOUR, mg: 95, label: "planned" }], noon), 0)
+
+  // Six calendar days back means six days of pan: a day step per press.
+  const doses = [dayOf(2025, 7, 28, 9, 0, 200)]
+  assert.equal(caffeine.weekPanDaysAvailable(doses, noon), 6)
+
+  // The furthest week back still holds the oldest dose, on its last bar.
+  const far = noon - 6 * DAY
+  const farWeek = caffeine.weekDayDoses(doses, far)
+  assert.deepEqual(Array.from(farWeek[6].doses, (d) => d.mg), [200])
+  assert.equal(caffeine.weekTotalMg(doses, far), 200)
+  // And a week past that is out of the record entirely.
+  assert.equal(caffeine.weekTotalMg(doses, noon - 13 * DAY), 0)
+
+  // The floor is a whole number of days, so a panned week stays on its
+  // weekday grid, and it never reaches past what retention keeps.
+  assert.equal(caffeine.weekPanDaysAvailable([dayOf(2025, 7, 28, 9, 0, 200)], noon) % 1, 0)
+  assert.equal(caffeine.weekPanDaysAvailable(
+    [{ ts: noon - 400 * DAY, mg: 125, label: "old" }], noon),
+    caffeine.RETENTION_DAYS)
+})
+
+test("weekly offsets clamp rather than propagate", () => {
+  const noon = localTs(2025, 8, 3, 12, 0)
+  const doses = [{ ts: localTs(2025, 7, 28, 9, 0), mg: 200, label: "test" }]
+  // Forward stops at today, whatever was asked for.
+  assert.equal(caffeine.clampWeekOffset(DAY, doses, noon), 0)
+  assert.equal(caffeine.clampWeekOffset(0, doses, noon), 0)
+  // Inside the record the offset passes through untouched.
+  assert.equal(caffeine.clampWeekOffset(-3 * DAY, doses, noon), -3 * DAY)
+  // Past the oldest dose's week it stops at that week.
+  assert.equal(caffeine.clampWeekOffset(-99 * DAY, doses, noon), -6 * DAY)
+  // An empty log cannot be panned at all, and junk means no pan.
+  assert.equal(caffeine.clampWeekOffset(-DAY, [], noon), 0)
+  assert.equal(caffeine.clampWeekOffset(NaN, doses, noon), 0)
+  assert.equal(caffeine.clampWeekOffset(undefined, doses, noon), 0)
+  assert.equal(caffeine.clampWeekOffset(-Infinity, doses, noon), 0)
+  assert.equal(caffeine.clampWeekOffset("yesterday", doses, noon), 0)
+})
+
 test("a share is stamped in local time, like everything else on the card", () => {
   // The file sits beside a curve labelled in wall-clock hours. A UTC stamp
   // would be the one thing in the picture disagreeing with the rest of it —

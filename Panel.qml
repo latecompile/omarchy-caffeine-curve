@@ -113,6 +113,7 @@ Panel {
     // daily curve, and reopening it onto last week's overview is the panel
     // remembering something you did not ask it to.
     root.showWeekly = false
+    root.weekOffsetSeconds = 0
     // D97, and the same rule as the four below it: the panel is a glance at
     // now, and reopening it half-way down a page is the panel remembering
     // something you did not ask it to.
@@ -374,10 +375,32 @@ Panel {
     root.showWeekly = !root.showWeekly
   }
 
-  // Always the last seven calendar days ending today, never the pan: the
-  // bars are an overview you glance at, and an overview that follows the
-  // timeline off into last month is a second timeline with worse controls.
-  readonly property var weekView: Caffeine.weekDayDoses(root.doses, root.nowSeconds)
+  // The week pans like the day does: `weekOffsetSeconds` slides the week it
+  // ends on back through the record, a day per `[` and a week per `{`,
+  // clamped at today going forward and at the oldest dose's week going back.
+  // It is its own offset rather than the timeline's, so each view remembers
+  // where the other one was when you toggle back.
+  property double weekOffsetSeconds: 0
+  readonly property bool weekPanned: root.weekOffsetSeconds < 0
+
+  // The day the shown week ends on. Zero offset is today.
+  readonly property double weekAnchorTs: root.nowSeconds + root.weekOffsetSeconds
+
+  readonly property var weekView: Caffeine.weekDayDoses(root.doses, root.weekAnchorTs)
+
+  function panWeekBy(deltaSeconds) {
+    var next = Caffeine.clampWeekOffset(
+      root.weekOffsetSeconds + deltaSeconds, root.doses, root.nowSeconds)
+    if (next === root.weekOffsetSeconds) return false
+    root.weekOffsetSeconds = next
+    return true
+  }
+
+  function panWeekHome() {
+    if (root.weekOffsetSeconds === 0) return false
+    root.weekOffsetSeconds = 0
+    return true
+  }
 
   // The bars' shared scale, floored like the curve's so a quiet week does
   // not draw a green tea as a bender. No headroom factor: the totals sit
@@ -395,8 +418,12 @@ Panel {
     return total
   }
 
-  readonly property string weekTitleLine:
-    "LAST 7 DAYS  ·  " + root.amountTextOf(root.weekTotal)
+  // At home the title is the span; panned it names the day the span ends
+  // on, the way the daily caption names the day the window is about.
+  readonly property string weekTitleLine: root.weekPanned
+    ? "7 DAYS ENDING " + Caffeine.formatDayOffset(root.weekAnchorTs, root.nowSeconds).toUpperCase()
+      + "  ·  " + root.amountTextOf(root.weekTotal)
+    : "LAST 7 DAYS  ·  " + root.amountTextOf(root.weekTotal)
 
   // The most segments any of the seven bars stacks. The bar area divides
   // itself once, off this, so every segment in every bar is sized on the
@@ -408,8 +435,11 @@ Panel {
     return most
   }
 
-  function isWeekToday(ts) {
-    return Caffeine.daysApartLocal(ts, root.nowSeconds) === 0
+  // The week's end day, which is today at home and the day panned to
+  // otherwise. It carries the emphasis — the bar the week is "about", the
+  // way the daily caption's day is what the curve is about.
+  function isWeekEnd(ts) {
+    return Caffeine.daysApartLocal(ts, root.weekAnchorTs) === 0
   }
 
   // Weekday and day number, short enough for a seventh of the panel:
@@ -491,6 +521,7 @@ Panel {
       // wherever you had panned to last week would be the panel remembering
       // something you did not ask it to.
       root.viewOffsetSeconds = 0
+      root.weekOffsetSeconds = 0
       root.resample()
       // After the resample, so the wipe reveals the curve it is about to draw
       // rather than the one from last time.
@@ -3069,11 +3100,26 @@ Panel {
     // text, so nothing is forked and no modifier is invented — and none of
     // them collides with a drink digit, which is why "t" can be "today"
     // rather than a letter nobody could guess.
-    if (text === "[") root.panBy(-root.panStep)
-    else if (text === "]") root.panBy(root.panStep)
-    else if (text === "{") root.panBy(-root.panJump)
-    else if (text === "}") root.panBy(root.panJump)
-    else if (text === "t" || text === "T") root.panHome()
+    // The timeline keys pan whichever chart is on screen: the daily curve
+    // through `panBy`, the weekly bars through `panWeekBy` — a day per
+    // `[ ]`, a week per `{ }`, and `t` back to today in either. Each view
+    // keeps its own offset, so neither disturbs where the other one was.
+    else if (text === "[") {
+      if (root.showWeekly) root.panWeekBy(-root.panStep)
+      else root.panBy(-root.panStep)
+    } else if (text === "]") {
+      if (root.showWeekly) root.panWeekBy(root.panStep)
+      else root.panBy(root.panStep)
+    } else if (text === "{") {
+      if (root.showWeekly) root.panWeekBy(-root.panJump)
+      else root.panBy(-root.panJump)
+    } else if (text === "}") {
+      if (root.showWeekly) root.panWeekBy(root.panJump)
+      else root.panBy(root.panJump)
+    } else if (text === "t" || text === "T") {
+      if (root.showWeekly) root.panWeekHome()
+      else root.panHome()
+    }
     else if (text === "p" || text === "P") root.togglePin()
     // D105. Beside the timeline keys because it is one: `[ ]` move the window
     // and `d` changes what a window is.
@@ -4450,7 +4496,7 @@ Panel {
                         required property var modelData
                         required property int index
                         property var day: modelData
-                        property bool today: root.isWeekToday(modelData.ts)
+                        property bool today: root.isWeekEnd(modelData.ts)
                         width: (weekRow.width - weekRow.spacing * 6) / 7
                         spacing: Style.spacing.xs
 

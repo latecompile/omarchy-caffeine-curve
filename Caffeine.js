@@ -2399,6 +2399,35 @@ function weekTotalMg(doses, atSeconds) {
   return total
 }
 
+// How far back the weekly bars go, in whole days: to the week ending on the
+// oldest dose's day and no further. A week is seven days wide, so the furthest
+// week back is the one ending that many days ago — it still holds the oldest
+// dose on its last bar, and one day further would not. The same rule as the
+// daily pan's floor (never pan into a record of empty days), stated for a
+// window that is a week wide rather than a day. Capped at retention, like the
+// daily one, and whole days so the bars stay on their weekday grid.
+function weekPanDaysAvailable(doses, nowSeconds) {
+  var sorted = sanitizeDoses(doses)
+  if (sorted.length === 0) return 0
+  var oldest = sorted[sorted.length - 1].ts
+  var now = toSeconds(nowSeconds)
+  var days = daysApartLocal(oldest, now)
+  if (days <= 0) return 0
+  return days > RETENTION_DAYS ? RETENTION_DAYS : days
+}
+
+// Forward stops at today. The panel already shows the week ending today, and
+// a week ending in the future is six empty bars and a today that has not
+// happened yet.
+function clampWeekOffset(offsetSeconds, doses, nowSeconds) {
+  var offset = finiteNumber(offsetSeconds, 0)
+  if (offset >= 0) return 0
+  var days = weekPanDaysAvailable(doses, nowSeconds)
+  if (days === 0) return 0
+  var floor = -days * SECONDS_PER_DAY
+  return offset < floor ? floor : offset
+}
+
 // ------------------------------------------------------------------- notes
 //
 // D48/D65. A day you have scrolled to can be written on, and the written days
