@@ -81,7 +81,7 @@ var SHARE_URL = "github.com/latecompile/omarchy-caffeine-curve"
 // it changes at every release, which is exactly when nobody is looking at it.
 // A card that names a build nobody shipped is worse than no card, because the
 // report it produces is unreproducible.
-var VERSION = "0.2.1"
+var VERSION = "0.3.0"
 
 // The feed, and it earns a place on screen rather than only in the README
 // because the README is not open at eleven at night when the curve looks
