@@ -403,8 +403,9 @@ Panel {
   }
 
   // The bars' shared scale, floored like the curve's so a quiet week does
-  // not draw a green tea as a bender. No headroom factor: the totals sit
-  // above the bars rather than inside them, so the tallest may touch the top.
+  // not draw a green tea as a bender. No headroom factor: the totals ride
+  // inside the tracks, in a band the stacks are sized to clear, so the tallest
+  // day may fill everything the number leaves it.
   readonly property real weekMax: {
     var highest = 0
     for (var i = 0; i < root.weekView.length; i++)
@@ -446,6 +447,15 @@ Panel {
   // "Mon 8". The year and month ride in the neighbouring bars.
   function weekDayLabel(ts) {
     return Qt.formatDate(new Date(ts * 1000), "ddd d")
+  }
+
+  // The drink's name alone for a bar segment. A logged label is the pill's
+  // name plus its serving detail in brackets — "Coffee (240 ml)" — and a
+  // seventh of the panel has room for one of those two, so the brackets go
+  // and the name stays. Inverse of Presets.labelOf: the trailing group only,
+  // so "Flat white (small) (240 ml)" keeps the half the pill itself shows.
+  function weekSegmentLabel(label) {
+    return String(label || "").replace(/\s*\([^()]*\)\s*$/, "")
   }
 
   // Autoscaled to the window with a little headroom, floored so that a single
@@ -4500,18 +4510,6 @@ Panel {
                         width: (weekRow.width - weekRow.spacing * 6) / 7
                         spacing: Style.spacing.xs
 
-                        Text {
-                          width: parent.width
-                          horizontalAlignment: Text.AlignHCenter
-                          textFormat: Text.PlainText
-                          text: day.total > 0 ? root.amountTextOf(day.total) : "—"
-                          color: today ? root.foreground : root.dim
-                          font.family: root.fontFamily
-                          font.pixelSize: Style.font.caption
-                          font.bold: today
-                          elide: Text.ElideRight
-                        }
-
                         Item {
                           id: weekBarArea
                           width: parent.width
@@ -4522,6 +4520,30 @@ Panel {
                             radius: Style.cornerRadius
                             color: Qt.rgba(root.foreground.r, root.foreground.g,
                                            root.foreground.b, 0.08)
+                          }
+
+                          // The day's total, in the head of its own track. It
+                          // reads over the empty part of the track rather than
+                          // over the fill, because the stack below is sized
+                          // against the track *less* this band — so the tallest
+                          // day in the week stops under its own number instead
+                          // of printing it on the accent.
+                          Text {
+                            id: weekTotalLabel
+                            anchors.top: parent.top
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.topMargin: Style.spacing.xxs
+                            anchors.leftMargin: Style.spacing.xxs
+                            anchors.rightMargin: Style.spacing.xxs
+                            horizontalAlignment: Text.AlignHCenter
+                            textFormat: Text.PlainText
+                            text: day.total > 0 ? root.amountTextOf(day.total) : "—"
+                            color: today ? root.foreground : root.dim
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.caption
+                            font.bold: today
+                            elide: Text.ElideRight
                           }
 
                           Column {
@@ -4541,7 +4563,8 @@ Panel {
                                 required property int index
                                 width: parent.width
                                 height: {
-                                  var area = weekBarArea.height - Style.spacing.xxs * 2
+                                  var area = weekBarArea.height - weekTotalLabel.height
+                                    - Style.spacing.xxs * 3
                                     - Style.spacing.hairline * (root.weekMaxDoses - 1)
                                   if (area < 1) area = 1
                                   var h = modelData.mg / root.weekMax * area
@@ -4552,6 +4575,25 @@ Panel {
                                   ? root.accent
                                   : Qt.rgba(root.accent.r, root.accent.g,
                                             root.accent.b, 0.55)
+
+                                // Name the drink on segments tall enough to
+                                // hold it; the rest stay anonymous. Popup
+                                // background on the accent fill, the one pair
+                                // guaranteed to differ.
+                                Text {
+                                  anchors.centerIn: parent
+                                  width: parent.width - Style.spacing.xxs * 2
+                                  horizontalAlignment: Text.AlignHCenter
+                                  textFormat: Text.PlainText
+                                  visible: text !== ""
+                                    && parent.height >= implicitHeight + Style.spacing.xxs
+                                  text: root.weekSegmentLabel(modelData.label)
+                                  color: Color.popups.background
+                                  font.family: root.fontFamily
+                                  font.pixelSize: Style.font.caption
+                                  font.bold: true
+                                  elide: Text.ElideRight
+                                }
                               }
                             }
                           }
