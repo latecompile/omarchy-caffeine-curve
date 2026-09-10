@@ -3147,7 +3147,7 @@ Panel {
     // through `panBy`, the weekly bars through `panWeekBy` — a day per
     // `[ ]`, a week per `{ }`, and `t` back to today in either. Each view
     // keeps its own offset, so neither disturbs where the other one was.
-    else if (text === "[") {
+    if (text === "[") {
       if (root.showWeekly) root.panWeekBy(-root.panStep)
       else root.panBy(-root.panStep)
     } else if (text === "]") {
@@ -4539,7 +4539,9 @@ Panel {
                         required property var modelData
                         required property int index
                         property var day: modelData
-                        property bool today: root.isWeekEnd(modelData.ts)
+                        // True of one bar in the seven: today at home, the
+                        // day panned to otherwise. It carries the emphasis.
+                        property bool weekEnd: root.isWeekEnd(modelData.ts)
                         width: (weekRow.width - weekRow.spacing * 6) / 7
                         spacing: Style.spacing.xs
 
@@ -4572,10 +4574,10 @@ Panel {
                             horizontalAlignment: Text.AlignHCenter
                             textFormat: Text.PlainText
                             text: day.total > 0 ? root.amountTextOf(day.total) : "—"
-                            color: today ? root.foreground : root.dim
+                            color: weekEnd ? root.foreground : root.dim
                             font.family: root.fontFamily
                             font.pixelSize: Style.font.caption
-                            font.bold: today
+                            font.bold: weekEnd
                             elide: Text.ElideRight
                           }
 
@@ -4604,7 +4606,7 @@ Panel {
                                   return Math.max(Style.spacing.hairline * 2, h)
                                 }
                                 radius: Style.spacing.hairline * 2
-                                color: today
+                                color: weekEnd
                                   ? root.accent
                                   : Qt.rgba(root.accent.r, root.accent.g,
                                             root.accent.b, 0.55)
@@ -4637,10 +4639,10 @@ Panel {
                           horizontalAlignment: Text.AlignHCenter
                           textFormat: Text.PlainText
                           text: root.weekDayLabel(day.ts)
-                          color: today ? root.foreground : root.dim
+                          color: weekEnd ? root.foreground : root.dim
                           font.family: root.fontFamily
                           font.pixelSize: Style.font.caption
-                          font.bold: today
+                          font.bold: weekEnd
                           elide: Text.ElideRight
                         }
                       }
