@@ -347,6 +347,7 @@ Press `?` in the panel for the full list.
 | `p` | pin the day you are on, so it ghosts under today's curve — again, or at home, to clear it |
 | `n` | write a note on the day you are on |
 | `N` | the days you have noted |
+| `w` | the week's bars, or back to the curve |
 | `d` | how the chart is framed: now in the middle, a whole day, or the hours you choose |
 | `D` | the same, the other way round |
 | `c` | share the day as an image — 16:9, on the clipboard and in your screenshots folder |
@@ -416,6 +417,21 @@ and pressing `↵` on one takes the curve to that day.
 
 The plugin never draws a conclusion from any of it. It shows what you wrote
 beside what you logged; the reading is yours.
+
+## The week
+
+![Seven days as bars, each stacked from that day's drinks and headed by the day's total](preview_2.png)
+
+`w` swaps the curve for the last seven days, a bar each, today on the right.
+Every bar is that day's drinks stacked earliest at the bottom, sized by
+milligrams on one scale across the whole week, with the day's total in the
+head of its track. Segments with room for one carry the drink's name; the
+small ones stay anonymous rather than shout an abbreviation at you.
+
+The timeline keys pan it: `[` and `]` a day, `{` and `}` a week, `t` back to
+today — and it stops at the oldest drink on file for the same reason the
+curve does. The two views keep their own places, so `w` back and forth does
+not lose where you were on either.
 
 ## The estimate
 
