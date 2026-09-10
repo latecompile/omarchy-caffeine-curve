@@ -3173,6 +3173,61 @@ test("a share lands beside the shell's own screenshots and sorts with them", () 
     /^caffeine-curve-2025-12-09_00-00-00\.png$/)
 })
 
+test("the week is seven calendar days ending today, oldest first", () => {
+  const days = caffeine.weekDays(NOW)
+  assert.equal(days.length, 7)
+  // Today is the most right: the last entry holds now.
+  const today = days[days.length - 1]
+  assert.ok(today.from <= NOW && NOW < today.to)
+  // The most left is today minus six days.
+  assert.equal(caffeine.daysApartLocal(days[0].ts, NOW), 6)
+  // Each day is midnight to midnight, contiguous, in order.
+  for (let i = 0; i < days.length; i++) {
+    const from = new Date(days[i].from * 1000)
+    assert.equal(from.getHours(), 0)
+    assert.ok(days[i].from < days[i].to)
+    if (i > 0) assert.equal(days[i].from, days[i - 1].to)
+    if (i > 0) assert.ok(days[i].ts > days[i - 1].ts)
+  }
+  // Junk degrades rather than throwing inside the shell process.
+  assert.equal(caffeine.weekDays(undefined).length, 7)
+})
+
+test("each weekly bar holds that day's drinks in order, plus its total", () => {
+  const noon = localTs(2025, 8, 3, 12, 0)
+  const dayOf = (y, m, d, h, min, mg) =>
+    ({ ts: localTs(y, m, d, h, min), mg, label: "test" })
+  const doses = [
+    dayOf(2025, 8, 3, 8, 0, 95),    // today, earliest
+    dayOf(2025, 8, 3, 15, 30, 125), // today, latest
+    dayOf(2025, 8, 2, 23, 59, 60),  // yesterday, still yesterday
+    dayOf(2025, 8, 2, 0, 0, 40),    // yesterday at midnight opens the day
+    dayOf(2025, 7, 28, 9, 0, 200),  // six days back: the first bar
+    dayOf(2025, 7, 27, 9, 0, 999),  // seven days back: off the left edge
+  ]
+  const week = caffeine.weekDayDoses(doses, noon)
+  assert.equal(week.length, 7)
+  // Oldest first, today last.
+  assert.equal(caffeine.daysApartLocal(week[0].ts, noon), 6)
+  assert.ok(week[6].from <= noon && noon < week[6].to)
+  // Today: two drinks oldest first, totalling both.
+  assert.deepEqual(Array.from(week[6].doses, (d) => d.mg), [95, 125])
+  assert.equal(week[6].total, 220)
+  // Yesterday: midnight belongs to the day it starts.
+  assert.deepEqual(Array.from(week[5].doses, (d) => d.mg), [40, 60])
+  assert.equal(week[5].total, 100)
+  // The first bar is six days back; anything older is not on the chart.
+  assert.equal(week[0].total, 200)
+  assert.deepEqual(Array.from(week[0].doses, (d) => d.mg), [200])
+  // A quiet day in the middle is a real empty day, not a missing one.
+  assert.equal(week[3].total, 0)
+  assert.deepEqual(Array.from(week[3].doses), [])
+  // The week total is the seven bars added up, and junk is an empty week.
+  assert.equal(caffeine.weekTotalMg(doses, noon), 520)
+  assert.equal(caffeine.weekTotalMg([], noon), 0)
+  assert.equal(caffeine.weekDayDoses(null, noon).length, 7)
+})
+
 test("a share is stamped in local time, like everything else on the card", () => {
   // The file sits beside a curve labelled in wall-clock hours. A UTC stamp
   // would be the one thing in the picture disagreeing with the rest of it —

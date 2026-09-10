@@ -109,6 +109,10 @@ Panel {
   function close() {
     setCenterHoverRevealSuppressed(false)
     root.showAllPresets = false
+    // The weekly bars do not survive a close either: the panel opens on the
+    // daily curve, and reopening it onto last week's overview is the panel
+    // remembering something you did not ask it to.
+    root.showWeekly = false
     // D97, and the same rule as the four below it: the panel is a glance at
     // now, and reopening it half-way down a page is the panel remembering
     // something you did not ask it to.
@@ -353,6 +357,65 @@ Panel {
       root.pinnedAnchorTs = root.viewAnchorTs
     }
     root.resampleGhost()
+  }
+
+  // ------------------------------------------------------- the weekly bars
+  //
+  // `w` swaps the daily curve for seven bars — today on the right, today
+  // minus six on the left — and `w` again swaps back. Each bar stacks that
+  // calendar day's drinks bottom-earliest, sized by milligrams, with the
+  // day's total on top. No per-segment figures: the stack shows the order
+  // and the size, the total shows the number, and anything more is labels
+  // arguing with a 70px column.
+  property bool showWeekly: false
+
+  function toggleWeekly() {
+    root.disarmPointer()
+    root.showWeekly = !root.showWeekly
+  }
+
+  // Always the last seven calendar days ending today, never the pan: the
+  // bars are an overview you glance at, and an overview that follows the
+  // timeline off into last month is a second timeline with worse controls.
+  readonly property var weekView: Caffeine.weekDayDoses(root.doses, root.nowSeconds)
+
+  // The bars' shared scale, floored like the curve's so a quiet week does
+  // not draw a green tea as a bender. No headroom factor: the totals sit
+  // above the bars rather than inside them, so the tallest may touch the top.
+  readonly property real weekMax: {
+    var highest = 0
+    for (var i = 0; i < root.weekView.length; i++)
+      if (root.weekView[i].total > highest) highest = root.weekView[i].total
+    return Math.max(50, highest)
+  }
+
+  readonly property real weekTotal: {
+    var total = 0
+    for (var j = 0; j < root.weekView.length; j++) total += root.weekView[j].total
+    return total
+  }
+
+  readonly property string weekTitleLine:
+    "LAST 7 DAYS  ·  " + root.amountTextOf(root.weekTotal)
+
+  // The most segments any of the seven bars stacks. The bar area divides
+  // itself once, off this, so every segment in every bar is sized on the
+  // same scale and no bar can overflow its track however many drinks it holds.
+  readonly property int weekMaxDoses: {
+    var most = 1
+    for (var i = 0; i < root.weekView.length; i++)
+      if (root.weekView[i].doses.length > most) most = root.weekView[i].doses.length
+    return most
+  }
+
+  function isWeekToday(ts) {
+    return Caffeine.daysApartLocal(ts, root.nowSeconds) === 0
+  }
+
+  // Weekday and day number, short enough for a seventh of the panel:
+  // "Mon 8". The year and month ride in the neighbouring bars.
+  function weekDayLabel(ts) {
+    return Qt.formatDate(new Date(ts * 1000), "ddd d")
   }
 
   // Autoscaled to the window with a little headroom, floored so that a single
@@ -3025,6 +3088,12 @@ Panel {
     // at which nobody would notice.
     else if (text === "d") root.stepFrame(1)
     else if (text === "D") root.stepFrame(-1)
+    // The chart's own toggle, beside the framing keys because it is one of
+    // them in spirit: `d` changes what a window is, `w` changes what the
+    // window is drawn as. Main page only, like `c` below it, and `w` is free
+    // there — the letters the panel spends are a c d i m n p s t u, and `w`
+    // is not among them.
+    else if (text === "w" || text === "W") root.toggleWeekly()
     // D65's pair, and they are one mnemonic rather than two: "n" writes on the
     // day you are standing on, "N" is every day you have written on. Neither
     // is a synonym for "p" — a pin is where you are looking, a note is
@@ -3376,6 +3445,11 @@ Panel {
       // actually go backwards sharing a word. Which is a reason rather than
       // a coincidence.
       { keys: "D", what: "back the other way" },
+      // The week's bars, in the chart's column because it is about the
+      // picture, and after the `d`/`D` pair it must not separate. Like `c`
+      // below it this stays off the footer legend: D94's free slot stays
+      // free, and the card is where D40 says such keys get written down.
+      { keys: "w", what: "the week's bars, or back" },
       // The share key, last in the right-hand column because that is the
       // chart's column — `[ ]`, `t`, `n`, `d` and `D` are all about the
       // picture, and so is this. **After `D` and not between the two**: D107
@@ -3946,7 +4020,7 @@ Panel {
               // note line under it already uses: a glyph, then the line.
               Item {
                 width: parent.width
-                visible: root.hasDoses && (root.panned || root.ghostVisible
+                visible: !root.showWeekly && root.hasDoses && (root.panned || root.ghostVisible
                   || root.hasPin || root.captionForced)
                 height: visible ? dayText.implicitHeight : 0
 
@@ -4137,7 +4211,7 @@ Panel {
               Item {
                 id: chart
                 width: parent.width
-                visible: root.hasDoses
+                visible: root.hasDoses && !root.showWeekly
                 height: visible ? curve.height + axis.height + Style.spacing.sm : 0
 
                 // D112's mark, and the reason `c` is not on the footer legend.
@@ -4329,6 +4403,127 @@ Panel {
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
                     font.bold: true
+                  }
+                }
+              }
+
+              // ---------------------------------------------------- weekly bars
+              //
+              // What `w` puts in place of the curve above: seven bars, today
+              // on the right and today minus six on the left. Each bar stacks
+              // that calendar day's drinks bottom-earliest, sized by
+              // milligrams on one shared scale, with the day's total on top
+              // and the weekday below. The stack carries the order and the
+              // size; the total carries the number — per-segment figures
+              // would be labels arguing with a seventh of the panel.
+              Item {
+                id: weekChart
+                width: parent.width
+                visible: root.showWeekly && root.hasDoses
+                height: visible ? weekCol.implicitHeight : 0
+
+                Column {
+                  id: weekCol
+                  width: parent.width
+                  spacing: Style.spacing.sm
+
+                  Text {
+                    width: parent.width
+                    textFormat: Text.PlainText
+                    horizontalAlignment: Text.AlignLeft
+                    text: root.weekTitleLine
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                  }
+
+                  Row {
+                    id: weekRow
+                    width: parent.width
+                    spacing: Style.spacing.md
+
+                    Repeater {
+                      model: root.weekView
+
+                      Column {
+                        required property var modelData
+                        required property int index
+                        property var day: modelData
+                        property bool today: root.isWeekToday(modelData.ts)
+                        width: (weekRow.width - weekRow.spacing * 6) / 7
+                        spacing: Style.spacing.xs
+
+                        Text {
+                          width: parent.width
+                          horizontalAlignment: Text.AlignHCenter
+                          textFormat: Text.PlainText
+                          text: day.total > 0 ? root.amountTextOf(day.total) : "—"
+                          color: today ? root.foreground : root.dim
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.caption
+                          font.bold: today
+                          elide: Text.ElideRight
+                        }
+
+                        Item {
+                          id: weekBarArea
+                          width: parent.width
+                          height: Style.space(104)
+
+                          Rectangle {
+                            anchors.fill: parent
+                            radius: Style.cornerRadius
+                            color: Qt.rgba(root.foreground.r, root.foreground.g,
+                                           root.foreground.b, 0.08)
+                          }
+
+                          Column {
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.bottom: parent.bottom
+                            anchors.leftMargin: Style.spacing.xxs
+                            anchors.rightMargin: Style.spacing.xxs
+                            anchors.bottomMargin: Style.spacing.xxs
+                            spacing: Style.spacing.hairline
+
+                            Repeater {
+                              model: day.doses.slice().reverse()
+
+                              Rectangle {
+                                required property var modelData
+                                required property int index
+                                width: parent.width
+                                height: {
+                                  var area = weekBarArea.height - Style.spacing.xxs * 2
+                                    - Style.spacing.hairline * (root.weekMaxDoses - 1)
+                                  if (area < 1) area = 1
+                                  var h = modelData.mg / root.weekMax * area
+                                  return Math.max(Style.spacing.hairline * 2, h)
+                                }
+                                radius: Style.spacing.hairline * 2
+                                color: today
+                                  ? root.accent
+                                  : Qt.rgba(root.accent.r, root.accent.g,
+                                            root.accent.b, 0.55)
+                              }
+                            }
+                          }
+                        }
+
+                        Text {
+                          width: parent.width
+                          horizontalAlignment: Text.AlignHCenter
+                          textFormat: Text.PlainText
+                          text: root.weekDayLabel(day.ts)
+                          color: today ? root.foreground : root.dim
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.caption
+                          font.bold: today
+                          elide: Text.ElideRight
+                        }
+                      }
+                    }
                   }
                 }
               }

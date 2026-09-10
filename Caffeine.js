@@ -2348,6 +2348,57 @@ function dayTotalMg(doses, atSeconds) {
   return total
 }
 
+// ------------------------------------------------------- the weekly bars
+//
+// The `w` view: seven calendar days ending today, oldest first, today last.
+// Calendar days (midnight to midnight) rather than the chart's anchored day,
+// because the ask names 00:00-23:59 explicitly. Stepped through local noon so
+// a DST change cannot duplicate or drop a day, the same reason dayKeyTs lands
+// at noon. Each entry carries its own window plus the day's drinks oldest
+// first and their total, so the panel stacks bottom-earliest without sorting.
+var WEEK_DAYS = 7
+
+function weekDays(atSeconds) {
+  var at = toSeconds(atSeconds)
+  var noon = new Date(at * 1000)
+  noon.setHours(12, 0, 0, 0)
+  var out = []
+  for (var back = WEEK_DAYS - 1; back >= 0; back--) {
+    var date = new Date(noon.getTime())
+    date.setDate(date.getDate() - back)
+    var ts = Math.floor(date.getTime() / 1000)
+    var range = dayRangeAt(ts)
+    out.push({ ts: ts, from: range.from, to: range.to })
+  }
+  return out
+}
+
+function weekDayDoses(doses, atSeconds) {
+  var days = weekDays(atSeconds)
+  var list = sanitizeDoses(doses)
+  var out = []
+  for (var i = 0; i < days.length; i++) {
+    var day = days[i]
+    var dayDoses = []
+    for (var j = list.length - 1; j >= 0; j--) {
+      var dose = list[j]
+      if (dose.ts >= day.from && dose.ts < day.to) dayDoses.push(dose)
+    }
+    var total = 0
+    for (var k = 0; k < dayDoses.length; k++) total += dayDoses[k].mg
+    out.push({ ts: day.ts, from: day.from, to: day.to,
+               doses: dayDoses, total: total })
+  }
+  return out
+}
+
+function weekTotalMg(doses, atSeconds) {
+  var days = weekDayDoses(doses, atSeconds)
+  var total = 0
+  for (var i = 0; i < days.length; i++) total += days[i].total
+  return total
+}
+
 // ------------------------------------------------------------------- notes
 //
 // D48/D65. A day you have scrolled to can be written on, and the written days
