@@ -436,6 +436,39 @@ Panel {
     return most
   }
 
+  // One caption line, measured rather than guessed, because the height rule
+  // below is arithmetic about whether a name fits and a line height off by
+  // two pixels makes it wrong in both directions at once.
+  TextMetrics {
+    id: weekLabelMetrics
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.caption
+    font.bold: true
+    text: "Cappuccino"
+  }
+
+  // The smallest drink the chart promises to name. Half a cup, so a tea or a
+  // single espresso is named and a decaf is not — a 2 mg dose is a sliver at
+  // any height the panel can hold, and sizing the week to fit its name would
+  // be a chart of the least interesting thing in it.
+  readonly property real weekLabelMg: Math.max(10, root.cupMg / 2)
+
+  // How tall the tracks are drawn: the height at which a weekLabelMg dose
+  // clears one caption line, solved from the segment sizing below rather than
+  // guessed at. Bars are milligrams, not slices, so the count of drinks is not
+  // what squeezes a name out — the week's heaviest day is, because it sets the
+  // scale every segment is drawn on. Floored at the old fixed height so a
+  // quiet week looks as it always did, capped because past this the chart is
+  // taller than the thing it is a chart of, and segments under the threshold
+  // keep their fallback: they stay anonymous.
+  readonly property real weekBarHeight: {
+    var line = weekLabelMetrics.height + Style.spacing.xxs * 2
+    var chrome = weekLabelMetrics.height + Style.spacing.xxs * 3
+      + Style.spacing.hairline * (root.weekMaxDoses - 1)
+    var need = line * root.weekMax / root.weekLabelMg + chrome
+    return Math.min(Style.space(240), Math.max(Style.space(104), need))
+  }
+
   // The week's end day, which is today at home and the day panned to
   // otherwise. It carries the emphasis — the bar the week is "about", the
   // way the daily caption's day is what the curve is about.
@@ -4513,7 +4546,7 @@ Panel {
                         Item {
                           id: weekBarArea
                           width: parent.width
-                          height: Style.space(104)
+                          height: root.weekBarHeight
 
                           Rectangle {
                             anchors.fill: parent
