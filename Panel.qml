@@ -145,8 +145,16 @@ Panel {
     return false
   }
 
+  // The bar exposes this to plugins through a facade whose copy of the flag is
+  // readonly, so the write has to go through the call the facade delegates
+  // with; assigning to the property throws, and this is the first thing
+  // `close()` does, so the throw used to strand the panel open with the
+  // keyboard grabbed. Direct assignment is kept for a shell old enough to
+  // have only the property.
   function setCenterHoverRevealSuppressed(value) {
-    if (root.bar && "centerHoverRevealSuppressed" in root.bar)
+    if (root.bar && typeof root.bar.setCenterHoverRevealSuppressed === "function")
+      root.bar.setCenterHoverRevealSuppressed(value)
+    else if (root.bar && "centerHoverRevealSuppressed" in root.bar)
       root.bar.centerHoverRevealSuppressed = value
   }
 
